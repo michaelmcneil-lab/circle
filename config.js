@@ -3,6 +3,6 @@
 // those rules only let a signed-in user read and write their own data.
 // Leave them empty to run Circle on this device only, with no sync.
 window.CIRCLE_CONFIG = {
-  supabaseUrl: '',
-  supabaseKey: '',
+  supabaseUrl: 'https://qiabotcewbolzzxxqyjc.supabase.co',
+  supabaseKey: 'sb_publishable_oiVsU2JynPFZ-p6hfujcoQ_JP-r4sEr',
 };
