@@ -135,6 +135,23 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
   display: grid; place-items: center; font-weight: 700; font-size: 14px;
 }
 .avatar.lg { width: 64px; height: 64px; font-size: 24px; }
+.avatar { position: relative; overflow: hidden; }
+.avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .2s; }
+.avatar img.loaded { opacity: 1; }
+.photo-field { display: flex; gap: 14px; align-items: center; }
+.photo-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 60;
+  background: var(--ink); color: var(--panel); padding: 10px 16px; border-radius: 10px; font-size: 14px; box-shadow: var(--shadow);
+  max-width: calc(100vw - 32px); opacity: 0; pointer-events: none; transition: opacity .25s; }
+.toast.show { opacity: 1; }
+.imp-start ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 14px; color: var(--ink-2); }
+.imp-tools { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.imp-list { list-style: none; margin: 0; padding: 0; max-height: 46vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; }
+.imp-list li { border-top: 1px solid var(--line); }
+.imp-list li:first-child { border-top: 0; }
+.imp-list label { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; cursor: pointer; }
+.imp-list input { margin-top: 4px; }
+.imp-list .sub { display: block; font-size: 13px; color: var(--ink-3); }
 
 main { overflow-y: auto; min-height: 0; padding: 24px; }
 .wrap { max-width: 1060px; margin: 0 auto; }
@@ -271,6 +288,7 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
       <button class="signed-in-only" data-act="syncNow">Sync now</button>
       <button class="signed-in-only" data-act="signOut">Sign out</button>
       <hr class="signed-in-only">
+      <button data-act="importContacts">Import contacts…</button>
       <button data-act="export">Export backup (.json)</button>
       <button data-act="import">Import backup…</button>
       <hr>
@@ -313,6 +331,15 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
 <dialog id="personDlg">
   <form id="personForm">
     <h3 id="personDlgTitle">Add person</h3>
+    <div class="photo-field">
+      <div class="avatar lg" id="photoPreview" aria-hidden="true"></div>
+      <div class="photo-actions">
+        <button type="button" class="btn small" id="photoPick">Add photo</button>
+        <button type="button" class="btn ghost small danger" id="photoRemove" hidden>Remove photo</button>
+        <input type="file" accept="image/*" id="photoInput" hidden>
+        <span class="hint" id="photoHint" style="flex-basis:100%"></span>
+      </div>
+    </div>
     <div class="field-row">
       <label class="field"><span>First name *</span><input type="text" name="firstName" required autocomplete="off"></label>
       <label class="field"><span>Last name</span><input type="text" name="lastName" autocomplete="off"></label>
@@ -449,6 +476,45 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
   </form>
 </dialog>
 
+<!-- Contacts import dialog -->
+<dialog id="impDlg">
+  <form id="impForm">
+    <h3>Import contacts</h3>
+    <div id="impStart" class="imp-start stack" style="gap:12px">
+      <p class="small" style="margin:0">Choose a contacts file (<strong>.vcf</strong>, also called a vCard). You'll get to pick who to bring in before anything is added.</p>
+      <ul>
+        <li><strong>iPhone, all contacts:</strong> in the Contacts app, tap <em>Lists</em>, long-press <em>All Contacts</em> (or any list), choose <em>Export</em> and save to Files.</li>
+        <li><strong>iPhone, one person:</strong> open them in Contacts → <em>Share Contact</em> → <em>Save to Files</em>.</li>
+        <li><strong>Google Contacts:</strong> contacts.google.com → <em>Export</em> → <em>vCard</em>.</li>
+        <li><strong>iCloud on a computer:</strong> icloud.com/contacts → select all → ⚙ → <em>Export vCard</em>.</li>
+      </ul>
+      <div class="p-actions">
+        <button type="button" class="btn primary" id="impPickFile">Choose contacts file…</button>
+        <button type="button" class="btn" id="impPickPhone" hidden>Choose from this phone</button>
+      </div>
+      <input type="file" id="impFile" accept=".vcf,text/vcard,text/x-vcard" hidden>
+      <p class="auth-error" id="impError" role="alert"></p>
+    </div>
+    <div id="impReview" class="stack" style="gap:12px" hidden>
+      <p class="small muted" style="margin:0" id="impSummary"></p>
+      <div class="field-row">
+        <label class="field"><span>Add new people as</span><select name="relationship"></select></label>
+        <label class="field"><span>Find</span><input type="search" id="impSearch" placeholder="Filter by name" autocomplete="off"></label>
+      </div>
+      <div class="imp-tools">
+        <button type="button" class="btn ghost small" data-imp-select="all">Select all</button>
+        <button type="button" class="btn ghost small" data-imp-select="none">Select none</button>
+        <span class="small muted" id="impCount"></span>
+      </div>
+      <ul class="imp-list" id="impList"></ul>
+    </div>
+    <div class="dlg-actions">
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="submit" class="btn primary" id="impGo" hidden>Import</button>
+    </div>
+  </form>
+</dialog>
+
 <input type="file" id="importInput" accept=".json,application/json" hidden>
 
 <script>
@@ -547,7 +613,11 @@ const fullName = p => [p.firstName, p.lastName].filter(Boolean).join(' ') || 'Un
 const sortName = (a, b, key) => (a[key] || a.firstName || '').localeCompare(b[key] || b.firstName || '', undefined, { sensitivity: 'base' });
 function hue(name) { let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % 360; }
 function initials(p) { return ((p.firstName || '')[0] || '').toUpperCase() + ((p.lastName || '')[0] || '').toUpperCase() || '?'; }
-function avatar(p, cls = '') { return `<div class="avatar ${cls}" style="--h:${hue(p.name)}" aria-hidden="true">${esc(initials(p))}</div>`; }
+function avatar(p, cls = '') {
+  // The photo loads in over the initials once it's fetched (see hydratePhotos).
+  const img = p.photo?.path ? `<img data-photo="${esc(p.photo.path)}" data-v="${esc(p.photo.v)}" alt="">` : '';
+  return `<div class="avatar ${cls}" style="--h:${hue(p.name)}" aria-hidden="true">${esc(initials(p))}${img}</div>`;
+}
 function ordinal(n) { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
 
 // ---------- Data ----------
@@ -814,6 +884,89 @@ function lossAnniversary(e) {
   const a = nextAnniversary(e.date);
   return a.years === 1 && a.days <= REMIND_DAYS ? a : null;
 }
+// ---------- Photos ----------
+// Photos live in a private Supabase Storage bucket at "<user id>/<person id>.jpg".
+// `p.photo = { path, v }`; v changes on every upload so devices know to refetch.
+// Downloaded photos are kept in the browser's Cache Storage so they show offline.
+const PHOTO_BUCKET = 'photos';
+const PHOTO_CACHE = 'circle-photos';
+const photosAvailable = () => !!(sync.client && sync.user);
+const photoCacheKey = (path, v) => new URL(`__photos/${path}?v=${v}`, location.href).href;
+const photoUrls = new Map(); // "path?v" → Promise of an object URL (or null)
+async function loadPhoto(path, v) {
+  let cache = null;
+  try { cache = await caches.open(PHOTO_CACHE); } catch (e) {}
+  const hit = cache && await cache.match(photoCacheKey(path, v));
+  if (hit) return URL.createObjectURL(await hit.blob());
+  if (!photosAvailable()) return null;
+  const { data: blob, error } = await sync.client.storage.from(PHOTO_BUCKET).download(path);
+  if (error) throw error;
+  if (cache) {
+    await cache.put(photoCacheKey(path, v), new Response(blob, { headers: { 'Content-Type': 'image/jpeg' } }));
+    for (const req of await cache.keys()) if (req.url.includes(`/__photos/${path}?`) && req.url !== photoCacheKey(path, v)) cache.delete(req);
+  }
+  return URL.createObjectURL(blob);
+}
+function photoUrl(path, v) {
+  const key = `${path}?${v}`;
+  if (!photoUrls.has(key)) {
+    // Forget failures (e.g. offline) so the next render tries again.
+    photoUrls.set(key, loadPhoto(path, v).catch(e => { console.warn('Photo failed', e); photoUrls.delete(key); return null; }));
+  }
+  return photoUrls.get(key);
+}
+function hydratePhotos(root = document) {
+  root.querySelectorAll('img[data-photo]:not([data-loading])').forEach(img => {
+    img.dataset.loading = '1';
+    photoUrl(img.dataset.photo, img.dataset.v).then(url => {
+      if (!url) { delete img.dataset.loading; return; }
+      img.onload = () => img.classList.add('loaded');
+      img.src = url;
+    });
+  });
+}
+// Crop to a centered square and shrink, so each photo is a small JPEG (~30 KB).
+async function squarePhoto(blob, size = 400) {
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    const s = Math.min(img.naturalWidth, img.naturalHeight);
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    c.getContext('2d').drawImage(img, (img.naturalWidth - s) / 2, (img.naturalHeight - s) / 2, s, s, 0, 0, size, size);
+    return await new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('Could not process the image')), 'image/jpeg', 0.85));
+  } finally { URL.revokeObjectURL(url); }
+}
+async function uploadPhoto(p, blob) {
+  const path = `${sync.user.id}/${p.id}.jpg`;
+  const { error } = await sync.client.storage.from(PHOTO_BUCKET).upload(path, blob, { upsert: true, contentType: 'image/jpeg' });
+  if (error) throw error;
+  const v = Date.now();
+  // Seed the cache so the new photo shows straight away without downloading it again.
+  try { await (await caches.open(PHOTO_CACHE)).put(photoCacheKey(path, v), new Response(blob, { headers: { 'Content-Type': 'image/jpeg' } })); } catch (e) {}
+  p.photo = { path, v };
+}
+async function deletePhoto(p) {
+  if (!p.photo) return;
+  const { path } = p.photo;
+  delete p.photo;
+  if (photosAvailable()) {
+    const { error } = await sync.client.storage.from(PHOTO_BUCKET).remove([path]);
+    if (error) console.warn('Photo not deleted from storage', error);
+  }
+}
+
+function toast(msg) {
+  let el = $('#toast');
+  if (!el) { el = document.createElement('div'); el.id = 'toast'; el.className = 'toast'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => el.classList.remove('show'), 4000);
+}
+
 function hardNow(p) {
   return p.events.filter(e => eventTone(e) === 'hard' && (eventState(e) === 'prominent' || lossAnniversary(e)))
     .sort((a, b) => b.date.localeCompare(a.date));
@@ -868,6 +1021,7 @@ function renderList() {
       ${overdueBy(p) != null ? '<span class="dot" title="Time to check in"></span>' : ''}
     </button>`;
   }).join('');
+  hydratePhotos(el);
 }
 
 function render() {
@@ -875,6 +1029,7 @@ function render() {
   const p = ui.selected && getPerson(ui.selected);
   if (!p) { ui.selected = null; renderHome(); } else renderPerson(p);
   document.body.classList.toggle('show-detail', !!p);
+  hydratePhotos($('#main'));
 }
 
 function personLink(p) { return `<button class="linkish" data-open="${p.id}">${esc(p.name)}</button>`; }
@@ -891,6 +1046,7 @@ function renderHome() {
       <h1>Keep your people close</h1>
       <p>Add friends and family, log your conversations, and note the big moments in their lives. Circle reminds you of birthdays and who you haven't caught up with in a while.</p>
       <button class="btn primary" data-act="addPerson">Add your first person</button>
+      <button class="btn" data-act="importContacts">Import contacts</button>
       <button class="btn" data-act="sample">Try with sample people</button>
     </div></div>`;
     return;
@@ -1149,10 +1305,49 @@ $('#personForm').addEventListener('click', e => {
   if (rm) rm.closest('.multi-row').remove();
 });
 
+// The photo being edited in the person dialog: { blob, url } for a new one,
+// 'remove' to take it off, or null to leave it as it is.
+let photoEdit = null;
+let photoFor = null; // the person whose dialog is open, if editing
+function showPhotoPreview() {
+  const f = $('#personForm');
+  const draft = { firstName: f.firstName.value.trim(), lastName: f.lastName.value.trim() };
+  draft.name = fullName(draft);
+  const box = $('#photoPreview');
+  box.style.setProperty('--h', hue(draft.name));
+  box.textContent = initials(draft);
+  const keep = photoEdit === null && photoFor?.photo;
+  if (photoEdit?.url) box.insertAdjacentHTML('beforeend', `<img class="loaded" src="${photoEdit.url}" alt="">`);
+  else if (keep) { box.insertAdjacentHTML('beforeend', `<img data-photo="${esc(photoFor.photo.path)}" data-v="${esc(photoFor.photo.v)}" alt="">`); hydratePhotos(box); }
+  const has = !!(photoEdit?.url || keep);
+  $('#photoPick').textContent = has ? 'Change photo' : 'Add photo';
+  $('#photoRemove').hidden = !has;
+  $('#photoPick').disabled = !photosAvailable();
+  $('#photoHint').textContent = photosAvailable() ? '' : 'Photos need you to be signed in and online.';
+}
+$('#photoPick').addEventListener('click', () => $('#photoInput').click());
+$('#photoRemove').addEventListener('click', () => { photoEdit = 'remove'; showPhotoPreview(); });
+$('#photoInput').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    const blob = await squarePhoto(file);
+    photoEdit = { blob, url: URL.createObjectURL(blob) };
+    showPhotoPreview();
+  } catch (err) {
+    console.warn(err);
+    $('#photoHint').textContent = "Couldn't read that image. Try a JPEG or PNG.";
+  }
+});
+['firstName', 'lastName'].forEach(k => $(`#personForm [name=${k}]`).addEventListener('input', showPhotoPreview));
+
 function openPersonDlg(p) {
   const f = $('#personForm');
   f.reset();
   f.dataset.id = p ? p.id : '';
+  photoEdit = null;
+  photoFor = p || null;
   $('#personDlgTitle').textContent = p ? `Edit ${p.name}` : 'Add person';
   Object.keys(MULTI).forEach(k => { $(`[data-multi=${k}]`).innerHTML = ''; (p?.[k] || []).forEach(item => addRow(k, item)); });
   if (!p?.phones.length) addRow('phones');
@@ -1165,6 +1360,7 @@ function openPersonDlg(p) {
     f.interests.value = p.interests.join(', ');
     f.tags.value = p.tags.join(', ');
   } else f.relationship.value = 'Friend';
+  showPhotoPreview();
   $('#personDlg').showModal();
 }
 // Returns the stored birthday string, or throws a message for the user.
@@ -1185,7 +1381,7 @@ function checkedBirthday(f) {
 }
 document.querySelectorAll('[name=bMonth], [name=bDay], [name=bYear]').forEach(el =>
   el.addEventListener('input', () => el.form.bMonth.setCustomValidity('')));
-$('#personForm').addEventListener('submit', e => {
+$('#personForm').addEventListener('submit', async e => {
   e.preventDefault();
   const f = e.target;
   const vals = {};
@@ -1202,6 +1398,16 @@ $('#personForm').addEventListener('submit', e => {
   if (p) Object.assign(p, vals);
   else { p = { id: uid(), events: [], createdAt: todayStr(), ...vals }; data.people.push(p); }
   p.name = fullName(p);
+  if (photoEdit) {
+    const btn = f.querySelector('button[type=submit]');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      if (photoEdit === 'remove') await deletePhoto(p); else await uploadPhoto(p, photoEdit.blob);
+    } catch (err) {
+      console.warn(err);
+      toast("Couldn't save the photo. Are you online? Your other changes were saved.");
+    } finally { btn.disabled = false; btn.textContent = 'Save'; }
+  }
   ui.selected = p.id;
   $('#personDlg').close(); save(); render();
 });
@@ -1361,6 +1567,264 @@ $('#evForm').addEventListener('submit', e => {
 });
 document.querySelectorAll('dialog [data-close]').forEach(b => b.addEventListener('click', () => b.closest('dialog').close()));
 
+// ---------- Contacts import (vCard files and the phone's contact picker) ----------
+// Splits on a separator, ignoring any inside double quotes.
+function splitOutside(s, sep) {
+  const out = []; let cur = '', q = false;
+  for (const ch of s) {
+    if (ch === '"') q = !q;
+    if (ch === sep && !q) { out.push(cur); cur = ''; } else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+// Structured values (N, ADR, ORG) separate parts with ";" unless it's escaped.
+function splitParts(s) {
+  const out = []; let cur = '';
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '\\' && i + 1 < s.length) { cur += s[i] + s[++i]; continue; }
+    if (s[i] === ';') { out.push(cur); cur = ''; } else cur += s[i];
+  }
+  out.push(cur);
+  return out.map(unescapeV);
+}
+const unescapeV = s => s.replace(/\\([nN,;:\\])/g, (m, c) => (c === 'n' || c === 'N') ? '\n' : c).trim();
+function decodeQP(s, charset) {
+  const bytes = [];
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '=' && /^[0-9a-f]{2}$/i.test(s.slice(i + 1, i + 3))) { bytes.push(parseInt(s.slice(i + 1, i + 3), 16)); i += 2; }
+    else bytes.push(s.charCodeAt(i) & 0xff);
+  }
+  try { return new TextDecoder(charset || 'utf-8').decode(new Uint8Array(bytes)); }
+  catch (e) { return new TextDecoder().decode(new Uint8Array(bytes)); }
+}
+function parseVCards(text) {
+  // Long lines are "folded": a line starting with a space or tab continues the one before.
+  const lines = text.replace(/\r\n?/g, '\n').replace(/\n[ \t]/g, '').split('\n');
+  const cards = [];
+  let cur = null;
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+    const colon = (() => { let q = false; for (let j = 0; j < line.length; j++) { if (line[j] === '"') q = !q; else if (line[j] === ':' && !q) return j; } return -1; })();
+    if (/^BEGIN:VCARD/i.test(line)) { cur = []; continue; }
+    if (/^END:VCARD/i.test(line)) { if (cur) cards.push(cur); cur = null; continue; }
+    if (!cur || colon < 0) continue;
+    const head = line.slice(0, colon);
+    let value = line.slice(colon + 1);
+    const [rawName, ...paramParts] = splitOutside(head, ';');
+    const name = rawName.replace(/^[^.]+\./, '').toUpperCase(); // drop Apple's "item1." groups
+    const params = {}, types = [];
+    for (const part of paramParts) {
+      const eq = part.indexOf('=');
+      if (eq < 0) { types.push(part.toLowerCase()); continue; } // vCard 2.1: "TEL;CELL:"
+      const k = part.slice(0, eq).toUpperCase(), v = part.slice(eq + 1).replace(/^"|"$/g, '');
+      if (k === 'TYPE') types.push(...v.toLowerCase().split(',')); else params[k] = v;
+    }
+    if (/quoted-printable/i.test(params.ENCODING || '') || types.includes('quoted-printable')) {
+      // Quoted-printable lines end in "=" when they continue on the next line.
+      while (value.endsWith('=') && i + 1 < lines.length) value = value.slice(0, -1) + lines[++i];
+      value = decodeQP(value, params.CHARSET);
+    }
+    cur.push({ name, params, types, value });
+  }
+  return cards.map(vcardToContact).filter(Boolean);
+}
+function vcardBirthday(v) {
+  v = v.trim();
+  let m = v.match(/^--(\d{2})-?(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}`;
+  m = v.match(/^(\d{4})-?(\d{2})-?(\d{2})/);
+  if (!m) return '';
+  // Apple writes 1604 when the year isn't known.
+  return m[1] === '1604' || m[1] === '0000' ? `${m[2]}-${m[3]}` : `${m[1]}-${m[2]}-${m[3]}`;
+}
+function vcardToContact(props) {
+  const all = n => props.filter(p => p.name === n);
+  const one = n => all(n)[0];
+  const text = n => one(n) ? unescapeV(one(n).value) : '';
+  let firstName = '', lastName = '';
+  if (one('N')) { const [last = '', first = ''] = splitParts(one('N').value); firstName = first; lastName = last; }
+  if (!firstName && !lastName && text('FN')) {
+    const parts = text('FN').split(/\s+/);
+    lastName = parts.length > 1 ? parts.pop() : '';
+    firstName = parts.join(' ');
+  }
+  const org = one('ORG') ? splitParts(one('ORG').value)[0] : '';
+  if (!firstName && !lastName) { if (!org) return null; firstName = org; } // a business card with no person's name
+  const label = (types, map, fallback) => { for (const [t, l] of map) if (types.includes(t)) return l; return fallback; };
+  const phones = all('TEL').map(p => ({
+    label: label(p.types, [['cell', 'Mobile'], ['mobile', 'Mobile'], ['iphone', 'Mobile'], ['home', 'Home'], ['work', 'Work']], 'Other'),
+    value: unescapeV(p.value).replace(/^tel:/i, ''),
+  })).filter(x => x.value);
+  const emails = all('EMAIL').map(p => ({
+    label: label(p.types, [['work', 'Work'], ['home', 'Personal']], 'Personal'), value: unescapeV(p.value).replace(/^mailto:/i, ''),
+  })).filter(x => x.value);
+  const adrProp = all('ADR').find(p => p.types.includes('home')) || one('ADR');
+  let address = '';
+  if (adrProp) {
+    const [, , street = '', city = '', region = '', postal = '', country = ''] = splitParts(adrProp.value);
+    address = [street, [city, [region, postal].filter(Boolean).join(' ')].filter(Boolean).join(', '), country].filter(Boolean).join('\n');
+  }
+  const links = [];
+  for (const p of [...all('URL'), ...all('X-SOCIALPROFILE')]) {
+    const href = safeUrl(unescapeV(p.value));
+    if (!href) continue;
+    const host = href.replace(/^https?:\/\/(www\.)?/, '').split('/')[0];
+    const site = Object.entries(LINK_SITES).find(([d]) => host === d || host.endsWith('.' + d))?.[1];
+    links.push({ label: site || 'Website', value: href });
+  }
+  const events = [];
+  const anniv = one('ANNIVERSARY') || one('X-ANNIVERSARY');
+  const annivDate = anniv && vcardBirthday(anniv.value);
+  if (annivDate && annivDate.length === 10) events.push({ date: annivDate, type: 'wedding', title: 'Wedding anniversary', recurring: true });
+  let photo = null;
+  const ph = one('PHOTO');
+  if (ph) {
+    const v = ph.value.trim();
+    if (/^data:image\//i.test(v)) photo = { dataUrl: v };
+    else if (/^b(ase64)?$/i.test(ph.params.ENCODING || '') || ph.types.includes('base64')) {
+      const t = (ph.params.TYPE || ph.types.find(x => /jpe?g|png|gif|heic/.test(x)) || 'jpeg').toLowerCase().replace('jpg', 'jpeg');
+      photo = { dataUrl: `data:image/${t};base64,${v.replace(/\s/g, '')}` };
+    }
+  }
+  return {
+    firstName, lastName, nickname: text('NICKNAME'), company: org === firstName ? '' : org, jobTitle: text('TITLE'),
+    birthday: one('BDAY') ? vcardBirthday(one('BDAY').value) : '', phones, emails, address, links, notes: text('NOTE'), events, photo,
+  };
+}
+const digitsOf = s => String(s).replace(/\D/g, '').slice(-10);
+function findExisting(c) {
+  const name = fullName(c).toLowerCase();
+  const emails = new Set(c.emails.map(e => e.value.toLowerCase()));
+  const phones = new Set(c.phones.map(x => digitsOf(x.value)).filter(d => d.length >= 7));
+  return data.people.find(p => p.name.toLowerCase() === name
+    || p.emails.some(e => emails.has(e.value.toLowerCase()))
+    || p.phones.some(x => phones.has(digitsOf(x.value))));
+}
+// Adds what the existing person is missing; never overwrites what's already there.
+function mergeContact(p, c) {
+  for (const k of ['nickname', 'company', 'jobTitle', 'address', 'birthday', 'notes']) if (!p[k] && c[k]) p[k] = c[k];
+  const haveDigits = new Set(p.phones.map(x => digitsOf(x.value)));
+  c.phones.forEach(x => { if (!haveDigits.has(digitsOf(x.value))) p.phones.push(x); });
+  const haveEmails = new Set(p.emails.map(x => x.value.toLowerCase()));
+  c.emails.forEach(x => { if (!haveEmails.has(x.value.toLowerCase())) p.emails.push(x); });
+  const haveLinks = new Set(p.links.map(x => safeUrl(x.value)));
+  c.links.forEach(x => { if (!haveLinks.has(x.value)) p.links.push(x); });
+  c.events.forEach(e => { if (!p.events.some(x => x.type === e.type && x.date === e.date)) p.events.push({ id: uid(), visibility: 'auto', notes: '', ...e }); });
+}
+
+let impItems = [];
+function openImport() {
+  impItems = [];
+  $('#impStart').hidden = false; $('#impReview').hidden = true; $('#impGo').hidden = true;
+  $('#impError').textContent = '';
+  $('#impPickPhone').hidden = !('contacts' in navigator && 'select' in navigator.contacts);
+  $('#impDlg').showModal();
+}
+$('#impForm [name=relationship]').innerHTML = RELATIONSHIPS.map(r => `<option>${r}</option>`).join('');
+$('#impPickFile').addEventListener('click', () => $('#impFile').click());
+$('#impFile').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    const contacts = parseVCards(await file.text());
+    if (!contacts.length) throw new Error("No contacts found in that file. Make sure it's a .vcf (vCard) file.");
+    showImportReview(contacts);
+  } catch (err) { $('#impError').textContent = err.message; }
+});
+// The Contact Picker exists in Chrome on Android; iPhone Safari doesn't offer it yet.
+$('#impPickPhone').addEventListener('click', async () => {
+  try {
+    const supported = await navigator.contacts.getProperties();
+    const picked = await navigator.contacts.select(['name', 'email', 'tel', 'address'].filter(x => supported.includes(x)), { multiple: true });
+    const contacts = picked.map(x => {
+      const parts = String(x.name?.[0] || '').trim().split(/\s+/).filter(Boolean);
+      const a = x.address?.[0];
+      return {
+        firstName: parts.length > 1 ? parts.slice(0, -1).join(' ') : parts[0] || '', lastName: parts.length > 1 ? parts.at(-1) : '',
+        nickname: '', company: '', jobTitle: '', birthday: '', notes: '', links: [], events: [], photo: null,
+        phones: (x.tel || []).map(v => ({ label: 'Mobile', value: v })), emails: (x.email || []).map(v => ({ label: 'Personal', value: v })),
+        address: a ? [(a.addressLine || []).join(' '), [a.city, [a.region, a.postalCode].filter(Boolean).join(' ')].filter(Boolean).join(', '), a.country].filter(Boolean).join('\n') : '',
+      };
+    }).filter(c => c.firstName);
+    if (contacts.length) showImportReview(contacts);
+  } catch (err) { $('#impError').textContent = `Couldn't open your contacts: ${err.message}`; }
+});
+function showImportReview(contacts) {
+  impItems = contacts.map(c => { const match = findExisting(c); return { c, match, checked: !match }; })
+    .sort((a, b) => fullName(a.c).localeCompare(fullName(b.c)));
+  const dupes = impItems.filter(x => x.match).length;
+  $('#impSummary').textContent = `Found ${contacts.length} ${contacts.length === 1 ? 'contact' : 'contacts'}.`
+    + (dupes ? ` ${dupes === 1 ? '1 is' : `${dupes} are`} already in Circle, so ${dupes === 1 ? "it's" : "they're"} unticked. Tick ${dupes === 1 ? 'it' : 'them'} to fill in any missing details.` : '');
+  $('#impForm').relationship.value = 'Friend';
+  $('#impSearch').value = '';
+  $('#impList').innerHTML = impItems.map(({ c, match, checked }, i) => {
+    const bits = [c.phones[0]?.value, c.emails[0]?.value, c.company].filter(Boolean).map(esc).join(' · ');
+    return `<li data-name="${esc(fullName(c).toLowerCase())}"><label><input type="checkbox" data-imp="${i}" ${checked ? 'checked' : ''}>
+      <span><strong>${esc(fullName(c))}</strong>${c.photo ? ' 📷' : ''}<span class="sub">${bits || 'No phone or email'}</span>
+      ${match ? `<span class="sub">Already in Circle as ${esc(match.name)}: adds only missing details</span>` : ''}</span></label></li>`;
+  }).join('');
+  $('#impStart').hidden = true; $('#impReview').hidden = false; $('#impGo').hidden = false;
+  updateImpCount();
+}
+function updateImpCount() {
+  const n = impItems.filter(x => x.checked).length;
+  $('#impCount').textContent = `${n} selected`;
+  $('#impGo').textContent = n ? `Import ${n}` : 'Import';
+  $('#impGo').disabled = !n;
+}
+$('#impList').addEventListener('change', e => {
+  const i = e.target.dataset.imp;
+  if (i != null) { impItems[i].checked = e.target.checked; updateImpCount(); }
+});
+$('#impSearch').addEventListener('input', e => {
+  const q = e.target.value.trim().toLowerCase();
+  $('#impList').querySelectorAll('li').forEach(li => li.hidden = !!q && !li.dataset.name.includes(q));
+});
+$('#impForm').addEventListener('click', e => {
+  const mode = e.target.closest('[data-imp-select]')?.dataset.impSelect;
+  if (!mode) return;
+  // Only the rows currently shown, so "Select all" after filtering selects just the matches.
+  $('#impList').querySelectorAll('li:not([hidden]) input').forEach(cb => { cb.checked = mode === 'all'; impItems[cb.dataset.imp].checked = cb.checked; });
+  updateImpCount();
+});
+$('#impForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const chosen = impItems.filter(x => x.checked);
+  if (!chosen.length) return;
+  const rel = e.target.relationship.value;
+  const btn = $('#impGo');
+  btn.disabled = true;
+  let added = 0, updated = 0;
+  const withPhotos = [];
+  for (const { c, match } of chosen) {
+    if (match) { mergeContact(match, c); updated++; if (c.photo && !match.photo) withPhotos.push({ p: match, c }); continue; }
+    const p = normalize({ people: [{ id: uid(), relationship: rel, createdAt: todayStr(), ...c,
+      events: c.events.map(ev => ({ id: uid(), visibility: 'auto', notes: '', ...ev })), photo: undefined }] }).people[0];
+    data.people.push(p);
+    added++;
+    if (c.photo) withPhotos.push({ p, c });
+  }
+  save();
+  // Photos upload one by one after the people are saved, so a slow connection never loses contacts.
+  let photosDone = 0;
+  if (withPhotos.length && photosAvailable()) {
+    for (const { p, c } of withPhotos) {
+      btn.textContent = `Adding photos ${photosDone + 1} of ${withPhotos.length}…`;
+      try { await uploadPhoto(p, await squarePhoto(await (await fetch(c.photo.dataUrl)).blob())); photosDone++; }
+      catch (err) { console.warn('Photo import failed for', p.name, err); }
+    }
+    save();
+  }
+  btn.disabled = false;
+  $('#impDlg').close();
+  ui.selected = null;
+  render();
+  const parts = [added && `Added ${added} ${added === 1 ? 'person' : 'people'}`, updated && `updated ${updated}`, photosDone && `${photosDone} with photos`].filter(Boolean);
+  toast(parts.join(', ') + '.');
+});
+
 // ---------- Import / export / sample ----------
 function exportData() {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -1458,6 +1922,7 @@ const actions = {
   delPerson: () => {
     const p = getPerson(ui.selected);
     if (!confirm(`Delete ${p.name}? Their life events and one-on-one conversations will be deleted, and they'll be taken off any group conversations.`)) return;
+    deletePhoto(p);
     data.people = data.people.filter(x => x !== p);
     data.interactions.forEach(i => i.personIds = i.personIds.filter(id => id !== p.id));
     data.interactions = data.interactions.filter(i => i.personIds.length);
@@ -1466,6 +1931,7 @@ const actions = {
   },
   addEvent: () => openEvDlg(ui.selected),
   addFamily: () => openFamDlg(),
+  importContacts: () => openImport(),
   eventAny: () => openEvDlg(null),
   logAny: () => openIxDlg(null),
   home: () => select(null),

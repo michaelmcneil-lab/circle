@@ -1,6 +1,7 @@
 // Lets Circle open without a connection. The page itself is fetched fresh when
 // online (so updates arrive right away) and served from the cache when offline.
-const CACHE = 'circle-v2';
+const CACHE = 'circle-v3';
+const KEEP = [CACHE, 'circle-photos']; // photos are managed by the page and survive app updates
 const SHELL = ['./', 'index.html', 'config.js', 'manifest.webmanifest',
   'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 
@@ -11,7 +12,7 @@ self.addEventListener('install', e => {
 
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys()
-    .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+    .then(keys => Promise.all(keys.filter(k => !KEEP.includes(k)).map(k => caches.delete(k))))
     .then(() => self.clients.claim()));
 });
 
