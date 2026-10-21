@@ -1,11 +1,12 @@
 // Lets Circle open without a connection. The page itself is fetched fresh when
 // online (so updates arrive right away) and served from the cache when offline.
-const CACHE = 'circle-v1';
+const CACHE = 'circle-v2';
 const SHELL = ['./', 'index.html', 'config.js', 'manifest.webmanifest',
   'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {
@@ -30,7 +31,9 @@ self.addEventListener('fetch', e => {
     })));
     return;
   }
-  e.respondWith(fetch(req).then(res => {
+  // 'no-cache' asks GitHub whether the file changed instead of trusting the
+  // browser's copy, which GitHub Pages lets go stale for up to 10 minutes.
+  e.respondWith(fetch(req, { cache: 'no-cache' }).then(res => {
     if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); }
     return res;
   }).catch(() => caches.match(req, { ignoreSearch: true }).then(hit => hit || caches.match('index.html'))));
