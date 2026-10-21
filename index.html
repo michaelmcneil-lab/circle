@@ -1,0 +1,1535 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Circle</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Circle">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#201f1c" media="(prefers-color-scheme: dark)">
+<script src="config.js"></script>
+<style>
+:root {
+  --bg: #f6f4ef;
+  --panel: #ffffff;
+  --panel-2: #faf8f4;
+  --ink: #23211d;
+  --ink-2: #5d5850;
+  --ink-3: #8f897e;
+  --line: #e6e1d7;
+  --accent: #2f6f5e;
+  --accent-ink: #ffffff;
+  --accent-soft: #e3efe9;
+  --warn: #b5562b;
+  --warn-soft: #f7e6dc;
+  --calm: #4d5f86;
+  --calm-soft: #eaeef6;
+  --warm: #9a6210;
+  --warm-soft: #fbf1df;
+  --av-l: 86%;
+  --av-s: 45%;
+  --av-ink: #2a2620;
+  --shadow: 0 1px 2px rgba(40, 30, 10, .06), 0 4px 16px rgba(40, 30, 10, .05);
+  --radius: 12px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #171614; --panel: #201f1c; --panel-2: #262420; --ink: #ece8e0; --ink-2: #b6afa3; --ink-3: #847d71;
+    --line: #34312c; --accent: #6fbfa6; --accent-ink: #10211b; --accent-soft: #1f3530; --warn: #e48d62; --warn-soft: #3a261c;
+    --calm: #a3b4dc; --calm-soft: #232a38; --warm: #e2b25e; --warm-soft: #33291a;
+    --av-l: 32%; --av-s: 30%; --av-ink: #f1ece4; --shadow: none; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #171614; --panel: #201f1c; --panel-2: #262420; --ink: #ece8e0; --ink-2: #b6afa3; --ink-3: #847d71;
+  --line: #34312c; --accent: #6fbfa6; --accent-ink: #10211b; --accent-soft: #1f3530; --warn: #e48d62; --warn-soft: #3a261c;
+  --calm: #a3b4dc; --calm-soft: #232a38; --warm: #e2b25e; --warm-soft: #33291a;
+  --av-l: 32%; --av-s: 30%; --av-ink: #f1ece4; --shadow: none; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  display: flex; flex-direction: column;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+a { color: var(--accent); }
+
+/* Header */
+header.top {
+  display: flex; align-items: center; gap: 12px;
+  /* Room for the iPhone notch and rounded corners when opened from the home screen. */
+  padding: calc(10px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 10px calc(16px + env(safe-area-inset-left));
+  border-bottom: 1px solid var(--line); background: var(--panel);
+}
+.brand { font-weight: 700; font-size: 18px; letter-spacing: -.01em; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+.brand-dot { width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--accent); }
+.spacer { flex: 1; }
+.status { font-size: 12px; color: var(--ink-3); white-space: nowrap; }
+.status.warn { color: var(--warn); }
+
+.btn {
+  border: 1px solid var(--line); background: var(--panel); border-radius: 8px;
+  padding: 6px 12px; cursor: pointer; white-space: nowrap;
+}
+.btn:hover { background: var(--panel-2); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn.primary:hover { filter: brightness(1.06); }
+.btn.ghost { border-color: transparent; background: transparent; }
+.btn.ghost:hover { background: var(--panel-2); }
+.btn.small { padding: 2px 8px; font-size: 13px; }
+.btn.danger { color: var(--warn); }
+
+.menu { position: relative; }
+.menu-list {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 230px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow);
+  padding: 6px; display: none;
+}
+.menu-list.open { display: block; }
+.menu-list button { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
+.menu-list button:hover { background: var(--panel-2); }
+.menu-list hr { border: 0; border-top: 1px solid var(--line); margin: 6px 0; }
+.menu-note { font-size: 12px; color: var(--ink-3); padding: 4px 10px 6px; }
+
+body:not(.signed-in) .signed-in-only { display: none; }
+.auth { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: grid; place-items: center; padding: 16px; }
+.auth[hidden] { display: none; }
+.auth-card { width: min(380px, 100%); display: grid; gap: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 24px; box-shadow: var(--shadow); }
+.auth-error { margin: 0; min-height: 1.2em; color: var(--warn); font-size: 14px; }
+
+/* Layout */
+.app { flex: 1; display: grid; grid-template-columns: 300px 1fr; min-height: 0; }
+aside.side { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+.side-tools { padding: 12px; display: grid; gap: 8px; border-bottom: 1px solid var(--line); }
+.side-tools .row { display: flex; gap: 8px; }
+.side-tools select { flex: 1; min-width: 0; }
+input[type=search], input[type=text], input[type=date], input[type=email], input[type=tel], input[type=number], select, textarea {
+  width: 100%; border: 1px solid var(--line); background: var(--panel-2); border-radius: 8px; padding: 7px 10px;
+}
+textarea { resize: vertical; min-height: 70px; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.people { overflow-y: auto; flex: 1; padding: 6px; }
+.person-row {
+  display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 10px; cursor: pointer; border: 0;
+  background: none; width: 100%; text-align: left;
+}
+.person-row:hover { background: var(--panel-2); }
+.person-row.active { background: var(--accent-soft); }
+.person-row .meta { min-width: 0; flex: 1; }
+.person-row .nm { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.person-row .sub { font-size: 12px; color: var(--ink-3); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); flex: none; }
+.empty-list { padding: 24px 16px; color: var(--ink-3); text-align: center; font-size: 14px; }
+
+.avatar {
+  --h: 200; flex: none; width: 36px; height: 36px; border-radius: 50%;
+  background: hsl(var(--h) var(--av-s) var(--av-l)); color: var(--av-ink);
+  display: grid; place-items: center; font-weight: 700; font-size: 14px;
+}
+.avatar.lg { width: 64px; height: 64px; font-size: 24px; }
+
+main { overflow-y: auto; min-height: 0; padding: 24px; }
+.wrap { max-width: 1060px; margin: 0 auto; }
+h1 { font-size: 26px; margin: 0; letter-spacing: -.02em; }
+h2 { font-size: 15px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); font-weight: 600; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.stack { display: grid; gap: 16px; align-content: start; }
+.muted { color: var(--ink-3); }
+.small { font-size: 13px; }
+
+/* Home */
+.home-head { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+.list { list-style: none; margin: 0; padding: 0; }
+.list li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+.list li:first-child { border-top: 0; }
+.list .grow { flex: 1; min-width: 0; }
+.linkish { background: none; border: 0; padding: 0; cursor: pointer; font-weight: 600; text-align: left; }
+.linkish:hover { text-decoration: underline; }
+.pill { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink-2); white-space: nowrap; }
+.pill.accent { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+.pill.warn { background: var(--warn-soft); border-color: transparent; color: var(--warn); }
+
+.welcome { text-align: center; padding: 60px 20px; }
+.welcome p { color: var(--ink-2); max-width: 460px; margin: 10px auto 20px; }
+
+/* Person */
+.p-head { display: flex; gap: 16px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
+.p-head .info { flex: 1; min-width: 200px; }
+.p-head .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.p-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0; }
+.facts dt { color: var(--ink-3); font-size: 13px; padding-top: 1px; }
+.facts dd { margin: 0; white-space: pre-wrap; word-break: break-word; }
+.chipset { display: flex; flex-wrap: wrap; gap: 6px; }
+.note-text { white-space: pre-wrap; margin: 0; }
+.back { display: none; margin-bottom: 12px; }
+
+/* Top of mind */
+.tom { display: grid; gap: 10px; margin-bottom: 16px; }
+.tom-card { display: flex; gap: 14px; padding: 16px 18px; border-radius: var(--radius); border-left: 4px solid; }
+.tom-card.hard { background: var(--calm-soft); border-color: var(--calm); }
+.tom-card.happy { background: var(--warm-soft); border-color: var(--warm); }
+.tom-icon { font-size: 26px; line-height: 1.2; }
+.tom-title { font-weight: 700; font-size: 17px; }
+.tom-when { font-size: 13px; color: var(--ink-2); }
+.tom-anniv { margin-top: 6px; font-weight: 600; font-size: 14px; color: var(--calm); }
+.tom-note { margin-top: 10px; white-space: pre-wrap; word-break: break-word; }
+.tom-note > span { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--ink-3); }
+.tom-card.hard .tom-note.how > span { color: var(--calm); }
+.tom-card.happy .tom-note.how > span { color: var(--warm); }
+.tom-actions { display: flex; flex-direction: column; gap: 2px; align-items: flex-end; }
+.tom-quiet { font-size: 14px; color: var(--ink-2); display: flex; gap: 6px 14px; flex-wrap: wrap; padding: 0 4px; }
+.tom-quiet .lbl { color: var(--ink-3); }
+.hard-card { border-left: 4px solid var(--calm); }
+.hard-mark { flex: none; font-size: 14px; }
+
+.tl-filter { display: flex; gap: 4px; margin-bottom: 12px; }
+.tl-filter button { border: 1px solid var(--line); background: var(--panel); padding: 3px 10px; border-radius: 999px; cursor: pointer; font-size: 13px; }
+.tl-filter button.on { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.timeline { list-style: none; padding: 0; margin: 0; position: relative; }
+.timeline::before { content: ""; position: absolute; left: 15px; top: 4px; bottom: 4px; width: 2px; background: var(--line); }
+.tl-item { position: relative; padding: 0 0 18px 44px; }
+.tl-icon {
+  position: absolute; left: 0; top: 0; width: 32px; height: 32px; border-radius: 50%;
+  background: var(--panel); border: 2px solid var(--line); display: grid; place-items: center; font-size: 15px;
+}
+.tl-item.event .tl-icon { border-color: var(--accent); background: var(--accent-soft); }
+.tl-top { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.tl-title { font-weight: 600; }
+.tl-date { font-size: 13px; color: var(--ink-3); }
+.tl-body { white-space: pre-wrap; margin-top: 2px; color: var(--ink-2); word-break: break-word; }
+.tl-actions { margin-left: auto; display: flex; gap: 2px; opacity: .55; }
+.tl-item:hover .tl-actions, .tl-actions:focus-within { opacity: 1; }
+.follow { margin-top: 6px; display: flex; gap: 8px; align-items: flex-start; font-size: 14px; background: var(--panel-2); border: 1px dashed var(--line); padding: 6px 10px; border-radius: 8px; }
+.follow.done { text-decoration: line-through; color: var(--ink-3); }
+.follow input { margin-top: 4px; }
+
+/* Dialogs */
+dialog { border: 1px solid var(--line); border-radius: 14px; padding: 0; background: var(--panel); color: var(--ink); width: min(560px, calc(100vw - 32px)); box-shadow: 0 20px 60px rgba(0,0,0,.25); }
+dialog::backdrop { background: rgba(20, 18, 14, .45); }
+dialog form { padding: 20px; display: grid; gap: 12px; max-height: calc(100vh - 60px); overflow-y: auto; }
+dialog h3 { margin: 0 0 4px; font-size: 18px; }
+.field { display: grid; gap: 4px; }
+.field > span { font-size: 13px; color: var(--ink-2); }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.check { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+.dlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.hint { font-size: 12px; color: var(--ink-3); }
+.bday-row { display: grid; grid-template-columns: 1.5fr 1fr 1.2fr; gap: 6px; }
+.multi:empty { display: none; }
+.multi-row { display: grid; grid-template-columns: 118px minmax(0, 1fr) auto; gap: 6px; margin-bottom: 6px; }
+.add-row { justify-self: start; }
+.pronouns { font-size: 15px; font-weight: 400; color: var(--ink-3); margin-left: 6px; }
+.facts dd a + a { margin-left: 10px; }
+#ixPeople:not(:empty) { margin-bottom: 6px; }
+.person-chip { font-size: 14px; padding: 3px 6px 3px 10px; background: var(--accent-soft); color: var(--ink); border-color: transparent; }
+.person-chip button { border: 0; background: none; color: var(--ink-2); cursor: pointer; padding: 0 2px 0 4px; }
+.tl-with { font-weight: 400; color: var(--ink-2); }
+.fam-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; opacity: .6; }
+.list li:hover .fam-actions, .fam-actions:focus-within { opacity: 1; }
+
+.person-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); }
+@media (max-width: 860px) {
+  .grid2, .person-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 720px) {
+  .app { grid-template-columns: 1fr; }
+  body.show-detail aside.side { display: none; }
+  body:not(.show-detail) main { display: none; }
+  main { padding: 16px calc(16px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left)); }
+  .people { padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
+  /* iOS zooms into any field with text smaller than 16px. */
+  input, select, textarea { font-size: 16px; }
+  .back { display: inline-block; }
+  .status { font-size: 11px; white-space: normal; text-align: right; max-width: 90px; line-height: 1.2; }
+  .field-row { grid-template-columns: 1fr; }
+  .tom-card { flex-wrap: wrap; }
+  .tom-card > .grow { flex: 1; min-width: 0; }
+  .tom-actions { flex-direction: row; width: 100%; justify-content: flex-end; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand" id="brand" title="Home"><span class="brand-dot"></span>Circle</div>
+  <div class="spacer"></div>
+  <span class="status" id="status"></span>
+  <button class="btn primary" id="addPersonBtn">+ Person</button>
+  <div class="menu">
+    <button class="btn" id="menuBtn" aria-haspopup="true">⋯</button>
+    <div class="menu-list" id="menuList">
+      <div class="menu-note signed-in-only" id="acctNote"></div>
+      <button class="signed-in-only" data-act="syncNow">Sync now</button>
+      <button class="signed-in-only" data-act="signOut">Sign out</button>
+      <hr class="signed-in-only">
+      <button data-act="export">Export backup (.json)</button>
+      <button data-act="import">Import backup…</button>
+      <hr>
+      <button data-act="theme">Toggle light / dark</button>
+      <button data-act="sample">Add sample people</button>
+    </div>
+  </div>
+</header>
+<div class="auth" id="auth" hidden>
+  <form class="auth-card" id="authForm">
+    <div class="brand"><span class="brand-dot"></span>Circle</div>
+    <p class="muted" style="margin:0">Sign in to see your people on all your devices.</p>
+    <label class="field"><span>Email</span><input type="email" name="email" autocomplete="username" required></label>
+    <label class="field"><span>Password</span><input type="password" name="password" autocomplete="current-password" required></label>
+    <button class="btn primary" type="submit">Sign in</button>
+    <p class="auth-error" id="authError" role="alert"></p>
+  </form>
+</div>
+
+<div class="app">
+  <aside class="side">
+    <div class="side-tools">
+      <input type="search" id="search" placeholder="Search names, interests, notes…" aria-label="Search">
+      <div class="row">
+        <select id="relFilter" aria-label="Filter by relationship"></select>
+        <select id="sortBy" aria-label="Sort">
+          <option value="first">First name</option>
+          <option value="last">Last name</option>
+          <option value="recent">Recently talked</option>
+          <option value="overdue">Needs a check-in</option>
+        </select>
+      </div>
+    </div>
+    <div class="people" id="people"></div>
+  </aside>
+  <main id="main"></main>
+</div>
+
+<!-- Person dialog -->
+<dialog id="personDlg">
+  <form id="personForm">
+    <h3 id="personDlgTitle">Add person</h3>
+    <div class="field-row">
+      <label class="field"><span>First name *</span><input type="text" name="firstName" required autocomplete="off"></label>
+      <label class="field"><span>Last name</span><input type="text" name="lastName" autocomplete="off"></label>
+    </div>
+    <div class="field-row">
+      <label class="field"><span>Nickname</span><input type="text" name="nickname"></label>
+      <label class="field"><span>Pronouns</span><input type="text" name="pronouns" placeholder="e.g. she/her"></label>
+    </div>
+    <div class="field-row">
+      <label class="field"><span>Relationship</span><select name="relationship"></select></label>
+      <label class="field"><span>Check in</span>
+        <select name="contactEvery">
+          <option value="0">No reminder</option>
+          <option value="7">Every week</option>
+          <option value="14">Every 2 weeks</option>
+          <option value="30">Every month</option>
+          <option value="90">Every 3 months</option>
+          <option value="180">Every 6 months</option>
+          <option value="365">Every year</option>
+        </select>
+      </label>
+    </div>
+    <div class="field-row">
+      <label class="field"><span>Company</span><input type="text" name="company"></label>
+      <label class="field"><span>Job title</span><input type="text" name="jobTitle"></label>
+    </div>
+    <div class="field-row">
+      <div class="field"><span>Birthday</span>
+        <div class="bday-row">
+          <select name="bMonth" aria-label="Birthday month"></select>
+          <select name="bDay" aria-label="Birthday day"></select>
+          <input type="number" name="bYear" min="1900" max="2100" placeholder="Year" aria-label="Birthday year (optional)">
+        </div>
+        <span class="hint">Year is optional</span>
+      </div>
+      <label class="field"><span>How we met</span><input type="text" name="howMet"></label>
+    </div>
+    <div class="field"><span>Phone</span><div class="multi" data-multi="phones"></div>
+      <button type="button" class="btn ghost small add-row" data-add="phones">+ Add phone</button></div>
+    <div class="field"><span>Email</span><div class="multi" data-multi="emails"></div>
+      <button type="button" class="btn ghost small add-row" data-add="emails">+ Add email</button></div>
+    <div class="field"><span>Profiles &amp; links</span><div class="multi" data-multi="links"></div>
+      <button type="button" class="btn ghost small add-row" data-add="links">+ Add link</button></div>
+    <label class="field"><span>Address</span><textarea name="address" rows="2" style="min-height:0"></textarea></label>
+    <label class="field"><span>Family notes</span><textarea name="family" rows="2" style="min-height:0" placeholder="Anything else about their family"></textarea>
+      <span class="hint">Add partners, kids and pets with names and birthdays from the Family section on their page.</span></label>
+    <label class="field"><span>Interests</span><input type="text" name="interests" placeholder="Hiking, jazz, sourdough"><span class="hint">Separate with commas</span></label>
+    <label class="field"><span>Tags</span><input type="text" name="tags" placeholder="College, book club"><span class="hint">Separate with commas</span></label>
+    <label class="field"><span>Notes</span><textarea name="notes" placeholder="Favorite foods, gift ideas, things to remember…"></textarea></label>
+    <div class="dlg-actions">
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="submit" class="btn primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Interaction dialog -->
+<dialog id="ixDlg">
+  <form id="ixForm">
+    <h3 id="ixDlgTitle">Log a conversation</h3>
+    <div class="field"><span>Who was there</span>
+      <div class="chipset" id="ixPeople"></div>
+      <select id="ixAddPerson" aria-label="Add a person to this conversation"></select>
+    </div>
+    <div class="field-row">
+      <label class="field"><span>Date</span><input type="date" name="date" required></label>
+      <label class="field"><span>How</span><select name="type"></select></label>
+    </div>
+    <label class="field"><span>What did you talk about?</span><textarea name="summary" rows="4" required></textarea></label>
+    <label class="field"><span>Follow up / ask about next time</span><input type="text" name="followUp" placeholder="e.g. Ask how the job interview went"></label>
+    <label class="check" id="ixDoneField"><input type="checkbox" name="followUpDone"> Follow-up done</label>
+    <div class="dlg-actions">
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="submit" class="btn primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Life event dialog -->
+<dialog id="evDlg">
+  <form id="evForm">
+    <h3 id="evDlgTitle">Add life event</h3>
+    <label class="field" id="evPersonField"><span>Who</span><select name="personId"></select></label>
+    <div class="field-row">
+      <label class="field"><span>Type</span><select name="type"></select></label>
+      <label class="field"><span>Date</span><input type="date" name="date" required></label>
+    </div>
+    <label class="field"><span>What happened?</span><input type="text" name="title" required placeholder="e.g. Father passed away"></label>
+    <label class="field"><span>What they shared</span><textarea name="notes" rows="3" placeholder="The details they told you, in your own words"></textarea></label>
+    <label class="field"><span>How to show up</span><textarea name="howToShowUp" rows="2" style="min-height:0" placeholder="A note to your future self, e.g. Ask how he's doing, gently. Don't press for details."></textarea></label>
+    <div class="field-row">
+      <label class="field"><span>Top of mind</span>
+        <select name="visibility">
+          <option value="auto">Automatic</option>
+          <option value="pinned">Pinned (always show)</option>
+          <option value="hidden">Don't show</option>
+        </select>
+      </label>
+      <span class="hint" style="align-self:end;padding-bottom:4px">Automatic: hard news stays up for 3 months, good news for 6 weeks.</span>
+    </div>
+    <label class="check"><input type="checkbox" name="recurring"> Remind me each year (anniversary)</label>
+    <div class="dlg-actions">
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="submit" class="btn primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Family member dialog -->
+<dialog id="famDlg">
+  <form id="famForm">
+    <h3 id="famDlgTitle">Add family member</h3>
+    <label class="field"><span>Who</span>
+      <select name="linkTo"></select>
+      <span class="hint">Linking someone already in Circle shows the relationship on both of their pages.</span>
+    </label>
+    <label class="field"><span id="famRelLabel">Relationship</span><select name="rel"></select></label>
+    <div id="famManual" class="stack" style="gap:12px">
+      <label class="field"><span>Name *</span><input type="text" name="name" autocomplete="off"></label>
+      <div class="field"><span>Birthday</span>
+        <div class="bday-row">
+          <select name="bMonth" aria-label="Birthday month"></select>
+          <select name="bDay" aria-label="Birthday day"></select>
+          <input type="number" name="bYear" min="1900" max="2100" placeholder="Year" aria-label="Birthday year (optional)">
+        </div>
+        <span class="hint">Year is optional</span>
+      </div>
+      <label class="field"><span>Note</span><input type="text" name="note" placeholder="e.g. Loves dinosaurs, starting kindergarten"></label>
+    </div>
+    <div class="dlg-actions">
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="submit" class="btn primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<input type="file" id="importInput" accept=".json,application/json" hidden>
+
+<script>
+(() => {
+'use strict';
+
+// ---------- Constants ----------
+const LS_KEY = 'circle-data-v1';
+const RELATIONSHIPS = ['Family', 'Close friend', 'Friend', 'Colleague', 'Neighbor', 'Other'];
+const IX_TYPES = {
+  call: ['📞', 'Phone call'], text: ['💬', 'Texted'], inperson: ['☕', 'In person'],
+  video: ['🎥', 'Video call'], email: ['✉️', 'Email'], social: ['📱', 'Social media'], card: ['💌', 'Card / letter']
+};
+const EV_TYPES = {
+  birth: ['👶', 'Birth / adoption'], wedding: ['💍', 'Engagement / wedding'], graduation: ['🎓', 'Graduation'],
+  job: ['💼', 'New job / career'], move: ['🏡', 'Moved'], travel: ['✈️', 'Big trip'], milestone: ['⭐', 'Milestone'],
+  loss: ['🕊️', 'Loss / death'], health: ['🩺', 'Health'], breakup: ['💔', 'Divorce / breakup'],
+  hardship: ['🌧️', 'Job loss / hard time'], other: ['📌', 'Other']
+};
+const REMIND_DAYS = 30;
+// Family relations. `rev` is the same link seen from the other person's side.
+const FAMILY_REL = {
+  spouse: { label: 'Spouse', rev: 'spouse' }, partner: { label: 'Partner', rev: 'partner' },
+  child: { label: 'Child', rev: 'parent' }, parent: { label: 'Parent', rev: 'child' },
+  sibling: { label: 'Sibling', rev: 'sibling' }, grandchild: { label: 'Grandchild', rev: 'grandparent' },
+  grandparent: { label: 'Grandparent', rev: 'grandchild' }, inlaw: { label: 'In-law', rev: 'inlaw' },
+  other: { label: 'Other family', rev: 'other' }, pet: { label: 'Pet', rev: null },
+};
+// How long an event stays "top of mind". Hard events stay prominent longer, then
+// linger as a quieter reminder for the rest of the year.
+const HARD_TYPES = new Set(['loss', 'health', 'breakup', 'hardship']);
+const TOM_WINDOW = { hard: { prominent: 90, quiet: 365 }, happy: { prominent: 42, quiet: 0 } };
+const TOM_AHEAD = 60; // upcoming events (a surgery, a wedding) show this many days early
+
+// ---------- Utilities ----------
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const splitList = s => String(s || '').split(',').map(x => x.trim()).filter(Boolean);
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function parseDate(s) { const [y, m, d] = s.split('-').map(Number); return { y, m, d }; }
+function dayNum(s) { const { y, m, d } = parseDate(s); return Date.UTC(y, m - 1, d) / 86400000; }
+function daysSince(s) { return dayNum(todayStr()) - dayNum(s); }
+function fmtDate(s, withYear = true) {
+  if (!s) return '';
+  const { y, m, d } = parseDate(s);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, withYear ? { month: 'short', day: 'numeric', year: 'numeric' } : { month: 'short', day: 'numeric' });
+}
+function ago(days) {
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 14) return `${days} days ago`;
+  if (days < 60) return `${Math.round(days / 7)} weeks ago`;
+  if (days < 730) return `${Math.round(days / 30)} months ago`;
+  return `${Math.round(days / 365)} years ago`;
+}
+function inDays(days) { return days === 0 ? 'Today' : days === 1 ? 'Tomorrow' : `In ${days} days`; }
+function when(s) { const d = daysSince(s); return d < 0 ? inDays(-d) : ago(d).replace(/^./, c => c.toUpperCase()); }
+// Next yearly recurrence of a date: days until it and how many years it will mark.
+// years is null when the original year is unknown.
+function nextOccurrence(m, d, y) {
+  const today = dayNum(todayStr());
+  let year = parseDate(todayStr()).y;
+  let target = Date.UTC(year, m - 1, d) / 86400000;
+  if (target < today) { year++; target = Date.UTC(year, m - 1, d) / 86400000; }
+  return { days: target - today, years: y ? year - y : null };
+}
+function nextAnniversary(s) { const { y, m, d } = parseDate(s); return nextOccurrence(m, d, y); }
+// Birthdays are stored as "YYYY-MM-DD", or "MM-DD" when the year isn't known.
+function bday(p) {
+  if (!p.birthday) return null;
+  const n = p.birthday.split('-').map(Number);
+  return n.length === 3 ? { y: n[0], m: n[1], d: n[2] } : { y: null, m: n[0], d: n[1] };
+}
+function ageOf(b) {
+  if (!b?.y) return null;
+  const t = parseDate(todayStr());
+  return t.y - b.y - (t.m < b.m || (t.m === b.m && t.d < b.d) ? 1 : 0);
+}
+function fmtBirthday(b) {
+  const s = new Date(2000, b.m - 1, b.d).toLocaleDateString(undefined, b.y ? undefined : { month: 'long', day: 'numeric' });
+  if (!b.y) return s;
+  return `${new Date(b.y, b.m - 1, b.d).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })} (age ${ageOf(b)})`;
+}
+// Only http(s) links are allowed; a bare "linkedin.com/in/x" gets https:// added.
+function safeUrl(v) {
+  let u = String(v || '').trim();
+  if (!u) return null;
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(u)) u = 'https://' + u;
+  try { const x = new URL(u); return ['http:', 'https:'].includes(x.protocol) ? x.href : null; } catch (e) { return null; }
+}
+const fullName = p => [p.firstName, p.lastName].filter(Boolean).join(' ') || 'Unnamed';
+const sortName = (a, b, key) => (a[key] || a.firstName || '').localeCompare(b[key] || b.firstName || '', undefined, { sensitivity: 'base' });
+function hue(name) { let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % 360; }
+function initials(p) { return ((p.firstName || '')[0] || '').toUpperCase() + ((p.lastName || '')[0] || '').toUpperCase() || '?'; }
+function avatar(p, cls = '') { return `<div class="avatar ${cls}" style="--h:${hue(p.name)}" aria-hidden="true">${esc(initials(p))}</div>`; }
+function ordinal(n) { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
+
+// ---------- Data ----------
+// Conversations live in one list so a single entry can include several people.
+// Relations link two people in Circle: { from, to, type } means "to is from's <type>".
+// Family members who aren't in Circle themselves (kids, pets) live on the person.
+let data = { version: 2, people: [], interactions: [], relations: [] };
+let saveTimer = null;
+
+function normalize(d) {
+  if (!d || !Array.isArray(d.people)) throw new Error('This file does not look like Circle data.');
+  d.interactions = Array.isArray(d.interactions) ? d.interactions : [];
+  d.people.forEach(p => {
+    p.id ||= uid();
+    // Version 1 kept conversations inside each person.
+    (p.interactions || []).forEach(i => d.interactions.push({ ...i, personIds: [p.id] }));
+    delete p.interactions;
+    // Older data had one "name" field: last word becomes the last name.
+    if (p.firstName == null && p.lastName == null) {
+      const parts = String(p.name || '').trim().split(/\s+/).filter(Boolean);
+      p.lastName = parts.length > 1 ? parts.pop() : '';
+      p.firstName = parts.join(' ');
+    }
+    p.name = fullName(p);
+    // Older data had a single phone and email.
+    if (!Array.isArray(p.phones)) p.phones = p.phone ? [{ label: 'Mobile', value: p.phone }] : [];
+    if (!Array.isArray(p.emails)) p.emails = p.email ? [{ label: 'Personal', value: p.email }] : [];
+    delete p.phone; delete p.email;
+    p.links ||= [];
+    p.interests ||= []; p.tags ||= []; p.events ||= [];
+    p.familyMembers ||= [];
+    p.familyMembers.forEach(m => { m.id ||= uid(); if (!FAMILY_REL[m.rel]) m.rel = 'other'; });
+    p.contactEvery = Number(p.contactEvery) || 0;
+    p.events.forEach(e => { e.id ||= uid(); e.visibility ||= 'auto'; });
+  });
+  const ids = new Set(d.people.map(p => p.id));
+  d.interactions.forEach(i => { i.id ||= uid(); i.personIds = (i.personIds || []).filter(id => ids.has(id)); });
+  d.interactions = d.interactions.filter(i => i.personIds.length);
+  d.relations = (Array.isArray(d.relations) ? d.relations : [])
+    .filter(r => ids.has(r.from) && ids.has(r.to) && r.from !== r.to && FAMILY_REL[r.type]?.rev);
+  d.relations.forEach(r => r.id ||= uid());
+  d.version = 2;
+  return d;
+}
+function loadLocal() {
+  try { const raw = localStorage.getItem(LS_KEY); if (raw) data = normalize(JSON.parse(raw)); } catch (e) { console.warn(e); }
+}
+function save() {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch (e) { console.warn(e); }
+  if (!lsGet(SK.user)) return setStatus(); // not using sync on this device
+  sync.dirty = true;
+  storeSyncState();
+  if (!sync.user) return setStatus('offline'); // signed in before, but can't reach the server yet
+  setStatus('syncing');
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(syncNow, 800);
+}
+function setStatus(state) {
+  if (state) sync.state = state;
+  const s = lsGet(SK.user) ? sync.state : 'local';
+  const el = $('#status');
+  el.textContent = { local: 'Saved on this device', syncing: 'Syncing…', synced: 'Synced', offline: 'Offline · will sync later' }[s];
+  el.classList.toggle('warn', s === 'offline');
+}
+
+// ---------- Sync (Supabase) ----------
+// The whole dataset is one row per user. Each save bumps `revision`; an update
+// only succeeds if nobody else saved in between. If someone did (the other
+// device), the two versions are merged person by person and conversation by
+// conversation, using the last synced copy (`base`) to tell who changed what.
+const cfg = window.CIRCLE_CONFIG || {};
+const syncEnabled = !!(cfg.supabaseUrl && cfg.supabaseKey);
+const SUPABASE_JS = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm';
+const SK = { base: 'circle-sync-base', rev: 'circle-sync-rev', dirty: 'circle-sync-dirty', user: 'circle-sync-user' };
+const sync = { client: null, user: null, rev: 0, base: null, dirty: false, busy: false, again: false, state: 'synced' };
+const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const lsSet = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) {} };
+function loadSyncState() {
+  sync.rev = Number(lsGet(SK.rev)) || 0;
+  sync.dirty = lsGet(SK.dirty) === '1';
+  try { sync.base = JSON.parse(lsGet(SK.base) || 'null'); } catch (e) { sync.base = null; }
+}
+function storeSyncState() {
+  lsSet(SK.rev, String(sync.rev));
+  lsSet(SK.dirty, sync.dirty ? '1' : '0');
+  lsSet(SK.base, sync.base ? JSON.stringify(sync.base) : null);
+}
+// JSON with sorted keys, so two copies compare equal however their keys are ordered.
+const canon = v => JSON.stringify(v, (k, x) => x && typeof x === 'object' && !Array.isArray(x)
+  ? Object.fromEntries(Object.keys(x).sort().map(key => [key, x[key]])) : x);
+function mergeDocs(base, local, remote) {
+  const out = {};
+  for (const key of ['people', 'interactions', 'relations']) {
+    const byId = arr => new Map((arr || []).map(x => [x.id, x]));
+    const B = byId(base?.[key]), L = byId(local[key]), R = byId(remote[key]);
+    out[key] = [];
+    for (const id of new Set([...L.keys(), ...R.keys()])) {
+      const b = B.get(id), l = L.get(id), r = R.get(id);
+      // Unchanged here → take theirs (including a deletion); unchanged there → keep ours;
+      // changed on both → keep ours, unless we deleted something they edited.
+      const pick = canon(l) === canon(b) ? r : canon(r) === canon(b) ? l : (l ?? r);
+      if (pick) out[key].push(structuredClone(pick));
+    }
+  }
+  return normalize(out);
+}
+async function syncNow() {
+  if (!sync.user) return;
+  if (sync.busy) { sync.again = true; return; }
+  sync.busy = true;
+  clearTimeout(saveTimer);
+  setStatus('syncing');
+  const db = sync.client.from('circle_data');
+  try {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const { data: row, error } = await db.select('data, revision').eq('user_id', sync.user.id).maybeSingle();
+      if (error) throw error;
+      if (!row) {
+        // Nothing in the cloud yet: upload what's on this device.
+        const sent = structuredClone(data);
+        const { error: err } = await db.insert({ user_id: sync.user.id, data: sent, revision: 1 });
+        if (err?.code === '23505') continue; // the other device got there first
+        if (err) throw err;
+        sync.rev = 1; sync.base = sent; sync.dirty = canon(data) !== canon(sent);
+        storeSyncState();
+        if (!sync.dirty) break;
+        continue;
+      }
+      if (row.revision !== sync.rev) {
+        const remote = normalize(row.data);
+        data = sync.dirty ? mergeDocs(sync.base, data, remote) : structuredClone(remote);
+        sync.base = remote; sync.rev = row.revision;
+        try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch (e) {}
+        storeSyncState();
+        render();
+      }
+      if (!sync.dirty) break;
+      const sent = structuredClone(data);
+      const { data: rows, error: err } = await db.update({ data: sent, revision: sync.rev + 1, updated_at: new Date().toISOString() })
+        .eq('user_id', sync.user.id).eq('revision', sync.rev).select('revision');
+      if (err) throw err;
+      if (rows.length) {
+        sync.rev += 1; sync.base = sent; sync.dirty = canon(data) !== canon(sent);
+        storeSyncState();
+        if (!sync.dirty) break;
+      }
+      // No rows updated: the other device saved first. Loop round to merge its changes.
+    }
+    if (sync.dirty) sync.again = true;
+    setStatus(sync.dirty ? 'syncing' : 'synced');
+  } catch (e) {
+    console.warn('Sync failed', e);
+    setStatus('offline');
+  } finally {
+    sync.busy = false;
+    if (sync.again) { sync.again = false; saveTimer = setTimeout(syncNow, 1500); }
+  }
+}
+async function startSync() {
+  if (!syncEnabled) return setStatus();
+  try {
+    const { createClient } = await import(SUPABASE_JS);
+    sync.client = createClient(cfg.supabaseUrl, cfg.supabaseKey, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false } });
+  } catch (e) {
+    // Offline before the sync library was ever cached. Someone who has signed in
+    // here before can keep working on their local copy; it syncs on the next launch.
+    console.warn(e);
+    if (lsGet(SK.user)) { loadSyncState(); return setStatus('offline'); }
+    return showAuth('Connect to the internet to sign in.');
+  }
+  sync.client.auth.onAuthStateChange(event => { if (event === 'SIGNED_OUT' && sync.user) finishSignOut(); });
+  const { data: { session } } = await sync.client.auth.getSession();
+  if (session) onSignedIn(session.user); else showAuth();
+}
+function onSignedIn(user) {
+  const prev = lsGet(SK.user);
+  if (prev && prev !== user.id) {
+    // A different account: don't mix its data with what's here.
+    data = normalize({ people: [] });
+    lsSet(LS_KEY, null); [SK.base, SK.rev, SK.dirty].forEach(k => lsSet(k, null));
+  }
+  lsSet(SK.user, user.id);
+  sync.user = user;
+  loadSyncState();
+  // First sign-in on a device that already has people: merge them into the cloud copy.
+  if (!prev && data.people.length) sync.dirty = true;
+  $('#acctNote').textContent = `Signed in as ${user.email}`;
+  document.body.classList.add('signed-in');
+  hideAuth();
+  render();
+  syncNow();
+}
+function showAuth(message = '') {
+  $('#authError').textContent = message;
+  $('#auth').hidden = false;
+  setTimeout(() => $('#authForm').email.focus(), 50);
+}
+function hideAuth() { $('#auth').hidden = true; $('#authForm').reset(); }
+$('#authForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target, btn = f.querySelector('button[type=submit]');
+  btn.disabled = true; $('#authError').textContent = '';
+  try {
+    const { data: res, error } = await sync.client.auth.signInWithPassword({ email: f.email.value.trim(), password: f.password.value });
+    if (error) throw error;
+    onSignedIn(res.user);
+  } catch (err) {
+    $('#authError').textContent = /invalid/i.test(err.message) ? "That email and password don't match." : `Couldn't sign in: ${err.message}`;
+  } finally { btn.disabled = false; }
+});
+async function signOut() {
+  if (sync.dirty && !confirm("Some changes on this device haven't synced yet and will be lost. Sign out anyway?")) return;
+  if (!sync.dirty && !confirm('Sign out? Your data stays safe in the cloud and comes back when you sign in again.')) return;
+  try { await sync.client.auth.signOut(); } catch (e) { console.warn(e); }
+  finishSignOut();
+}
+function finishSignOut() {
+  // Clear this device's copy so the next person to pick it up can't read it.
+  sync.user = null;
+  [LS_KEY, SK.base, SK.rev, SK.dirty, SK.user].forEach(k => lsSet(k, null));
+  data = normalize({ people: [] });
+  ui.selected = null;
+  document.body.classList.remove('signed-in');
+  render(); setStatus(); showAuth();
+}
+// Pick up changes made on the other device.
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncNow(); });
+window.addEventListener('online', () => syncNow());
+setInterval(() => { if (document.visibilityState === 'visible') syncNow(); }, 5 * 60 * 1000);
+const getPerson = id => data.people.find(p => p.id === id);
+const ixFor = p => data.interactions.filter(i => i.personIds.includes(p.id));
+// Everyone in Circle linked to p, with the relation as seen from p's side.
+const relativesOf = p => data.relations.flatMap(r =>
+  r.from === p.id ? [{ r, other: getPerson(r.to), type: r.type }]
+  : r.to === p.id ? [{ r, other: getPerson(r.from), type: FAMILY_REL[r.type].rev }] : []).filter(x => x.other);
+const relLabel = type => FAMILY_REL[type]?.label || 'Family';
+const memberAvatar = m => {
+  if (m.rel === 'pet') return `<div class="avatar" style="--h:30" aria-hidden="true">🐾</div>`;
+  const [first = '', ...rest] = m.name.split(/\s+/);
+  return avatar({ name: m.name, firstName: first, lastName: rest.at(-1) || '' });
+};
+const sortedPeople = () => [...data.people].sort((a, b) => a.name.localeCompare(b.name));
+function lastContact(p) { return ixFor(p).reduce((m, i) => (!m || i.date > m ? i.date : m), null); }
+function overdueBy(p) {
+  if (!p.contactEvery) return null;
+  const last = lastContact(p);
+  if (!last) return Infinity;
+  const over = daysSince(last) - p.contactEvery;
+  return over > 0 ? over : null;
+}
+const eventTone = e => HARD_TYPES.has(e.type) ? 'hard' : 'happy';
+// 'prominent', 'quiet', or null (no longer top of mind).
+function eventState(e) {
+  if (e.visibility === 'hidden') return null;
+  if (e.visibility === 'pinned') return 'prominent';
+  const age = daysSince(e.date);
+  if (age < 0) return -age <= TOM_AHEAD ? 'prominent' : null;
+  const w = TOM_WINDOW[eventTone(e)];
+  return age <= w.prominent ? 'prominent' : age <= w.quiet ? 'quiet' : null;
+}
+// The first anniversary of a loss is coming up within the reminder window.
+function lossAnniversary(e) {
+  if (e.type !== 'loss') return null;
+  const a = nextAnniversary(e.date);
+  return a.years === 1 && a.days <= REMIND_DAYS ? a : null;
+}
+function hardNow(p) {
+  return p.events.filter(e => eventTone(e) === 'hard' && (eventState(e) === 'prominent' || lossAnniversary(e)))
+    .sort((a, b) => b.date.localeCompare(a.date));
+}
+
+
+// ---------- UI state ----------
+const ui = { selected: null, search: '', rel: '', sort: 'first', tl: 'all' };
+try { const s = localStorage.getItem('circle-sort'); if (s && $(`#sortBy option[value="${s}"]`)) ui.sort = s; } catch (e) {}
+$('#sortBy').value = ui.sort;
+
+const MONTHS = Array.from({ length: 12 }, (_, i) => new Date(2000, i, 1).toLocaleDateString(undefined, { month: 'long' }));
+document.querySelectorAll('[name=bMonth]').forEach(s => s.innerHTML = '<option value="">Month</option>' + MONTHS.map((m, i) => `<option value="${i + 1}">${m}</option>`).join(''));
+document.querySelectorAll('[name=bDay]').forEach(s => s.innerHTML = '<option value="">Day</option>' + Array.from({ length: 31 }, (_, i) => `<option>${i + 1}</option>`).join(''));
+$('#famForm [name=rel]').innerHTML = Object.entries(FAMILY_REL).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
+const CHECKIN_LABEL = Object.fromEntries([...$('#personForm [name=contactEvery]').options].map(o => [o.value, o.text]));
+
+$('#relFilter').innerHTML = `<option value="">Everyone</option>` + RELATIONSHIPS.map(r => `<option>${r}</option>`).join('');
+$('#personForm [name=relationship]').innerHTML = RELATIONSHIPS.map(r => `<option>${r}</option>`).join('');
+$('#ixForm [name=type]').innerHTML = Object.entries(IX_TYPES).map(([k, [i, l]]) => `<option value="${k}">${i} ${l}</option>`).join('');
+$('#evForm [name=type]').innerHTML = Object.entries(EV_TYPES).map(([k, [i, l]]) => `<option value="${k}">${i} ${l}</option>`).join('');
+
+function matches(p, q) {
+  if (!q) return true;
+  const hay = [p.name, p.nickname, p.company, p.jobTitle, p.address, p.notes, p.family, p.howMet, ...p.interests, ...p.tags,
+    ...p.phones.map(x => x.value), ...p.emails.map(x => x.value),
+    ...p.familyMembers.map(m => m.name + ' ' + (m.note || '')),
+    ...ixFor(p).map(i => i.summary + ' ' + (i.followUp || '')), ...p.events.map(e => e.title + ' ' + (e.notes || ''))].join(' ').toLowerCase();
+  return q.toLowerCase().split(/\s+/).every(w => hay.includes(w));
+}
+
+function renderList() {
+  let list = data.people.filter(p => (!ui.rel || p.relationship === ui.rel) && matches(p, ui.search));
+  const byFirst = (a, b) => sortName(a, b, 'firstName') || sortName(a, b, 'lastName');
+  const byLast = (a, b) => sortName(a, b, 'lastName') || sortName(a, b, 'firstName');
+  const byName = ui.sort === 'last' ? byLast : byFirst;
+  if (ui.sort === 'first' || ui.sort === 'last') list.sort(byName);
+  else if (ui.sort === 'recent') list.sort((a, b) => (lastContact(b) || '').localeCompare(lastContact(a) || '') || byName(a, b));
+  else list.sort((a, b) => (overdueBy(b) ?? -1) - (overdueBy(a) ?? -1) || byName(a, b));
+
+  const el = $('#people');
+  if (!data.people.length) { el.innerHTML = `<div class="empty-list">No one here yet.</div>`; return; }
+  if (!list.length) { el.innerHTML = `<div class="empty-list">No matches.</div>`; return; }
+  el.innerHTML = list.map(p => {
+    const last = lastContact(p);
+    const sub = last ? `Talked ${ago(daysSince(last))}` : 'No conversations yet';
+    const hard = hardNow(p)[0];
+    return `<button class="person-row ${p.id === ui.selected ? 'active' : ''}" data-id="${p.id}">
+      ${avatar(p)}
+      <div class="meta"><div class="nm">${ui.sort === 'last' && p.lastName ? `${esc(p.lastName)}, ${esc(p.firstName)}` : esc(p.name)}</div><div class="sub">${esc(p.relationship || '')} · ${sub}</div></div>
+      ${hard ? `<span class="hard-mark" title="${esc(hard.title)}">${EV_TYPES[hard.type][0]}</span>` : ''}
+      ${overdueBy(p) != null ? '<span class="dot" title="Time to check in"></span>' : ''}
+    </button>`;
+  }).join('');
+}
+
+function render() {
+  renderList();
+  const p = ui.selected && getPerson(ui.selected);
+  if (!p) { ui.selected = null; renderHome(); } else renderPerson(p);
+  document.body.classList.toggle('show-detail', !!p);
+}
+
+function personLink(p) { return `<button class="linkish" data-open="${p.id}">${esc(p.name)}</button>`; }
+// Links to everyone in a conversation, optionally leaving out the person whose page this is.
+function peopleLinks(ids, except) {
+  const links = ids.filter(id => id !== except).map(getPerson).filter(Boolean).map(personLink);
+  return links.length <= 2 ? links.join(' & ') : `${links.slice(0, -1).join(', ')} & ${links.at(-1)}`;
+}
+
+function renderHome() {
+  const main = $('#main');
+  if (!data.people.length) {
+    main.innerHTML = `<div class="wrap"><div class="welcome">
+      <h1>Keep your people close</h1>
+      <p>Add friends and family, log your conversations, and note the big moments in their lives. Circle reminds you of birthdays and who you haven't caught up with in a while.</p>
+      <button class="btn primary" data-act="addPerson">Add your first person</button>
+      <button class="btn" data-act="sample">Try with sample people</button>
+    </div></div>`;
+    return;
+  }
+  const upcoming = [];
+  data.people.forEach(p => {
+    const b = bday(p);
+    if (b) {
+      const a = nextOccurrence(b.m, b.d, b.y);
+      if (a.days <= REMIND_DAYS) upcoming.push({ p, days: a.days, label: `🎂 Birthday${a.years > 0 && a.years < 130 ? ` — turns ${a.years}` : ''}` });
+    }
+    p.events.filter(e => e.recurring || lossAnniversary(e)).forEach(e => {
+      const a = nextAnniversary(e.date);
+      if (a.days > REMIND_DAYS || a.years <= 0) return;
+      const icon = EV_TYPES[e.type]?.[0] || '📌';
+      const label = e.type === 'loss'
+        ? `${icon} ${a.years === 1 ? 'One year' : `${a.years} years`} since: ${esc(e.title)}`
+        : `${icon} ${esc(e.title)} — ${ordinal(a.years)} anniversary`;
+      upcoming.push({ p, days: a.days, label });
+    });
+    p.familyMembers.forEach(m => {
+      const mb = bday(m);
+      if (!mb) return;
+      const a = nextOccurrence(mb.m, mb.d, mb.y);
+      if (a.days > REMIND_DAYS) return;
+      const icon = m.rel === 'pet' ? '🐾' : '🎂';
+      upcoming.push({ p, days: a.days, label: `${icon} ${esc(m.name)}'s birthday (${esc(p.firstName)}'s ${relLabel(m.rel).toLowerCase()})${a.years > 0 && a.years < 130 ? ` — turns ${a.years}` : ''}` });
+    });
+  });
+  upcoming.sort((a, b) => a.days - b.days);
+
+  const hard = data.people.map(p => ({ p, e: hardNow(p)[0] })).filter(x => x.e)
+    .sort((a, b) => b.e.date.localeCompare(a.e.date));
+
+  const overdue = data.people.map(p => ({ p, over: overdueBy(p) })).filter(x => x.over != null).sort((a, b) => b.over - a.over);
+  const byDateDesc = (a, b) => b.date.localeCompare(a.date);
+  const follows = data.interactions.filter(i => i.followUp && !i.followUpDone).sort(byDateDesc);
+  const recent = [...data.interactions].sort(byDateDesc);
+  const firstOf = i => getPerson(i.personIds[0]);
+
+  const empty = t => `<p class="muted small" style="margin:0">${t}</p>`;
+  main.innerHTML = `<div class="wrap">
+    <div class="home-head">
+      <div><h1>Hello again</h1><div class="muted">${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })} · ${data.people.length} ${data.people.length === 1 ? 'person' : 'people'} in your circle</div></div>
+      <div class="p-actions">
+        <button class="btn" data-act="eventAny">Note a life event</button>
+        <button class="btn primary" data-act="logAny">Log a conversation</button>
+      </div>
+    </div>
+    ${hard.length ? `<section class="card hard-card" style="margin-bottom:16px"><h2>Going through something</h2>
+      <ul class="list">${hard.map(({ p, e }) => `<li>${avatar(p)}<div class="grow">${personLink(p)}
+        <div class="small">${EV_TYPES[e.type][0]} ${esc(e.title)} <span class="muted">· ${when(e.date).toLowerCase()}</span></div>
+        ${e.howToShowUp ? `<div class="small muted">${esc(e.howToShowUp)}</div>` : ''}</div></li>`).join('')}</ul>
+    </section>` : ''}
+    <div class="grid2">
+      <div class="stack">
+        <section class="card"><h2>Coming up · next ${REMIND_DAYS} days</h2>
+          ${upcoming.length ? `<ul class="list">${upcoming.map(u => `<li>${avatar(u.p)}<div class="grow">${personLink(u.p)}<div class="small muted">${u.label}</div></div><span class="pill ${u.days <= 7 ? 'accent' : ''}">${inDays(u.days)}</span></li>`).join('')}</ul>` : empty('No birthdays or anniversaries in the next month.')}
+        </section>
+        <section class="card"><h2>Time to check in</h2>
+          ${overdue.length ? `<ul class="list">${overdue.slice(0, 10).map(({ p, over }) => {
+            const last = lastContact(p);
+            return `<li>${avatar(p)}<div class="grow">${personLink(p)}<div class="small muted">${last ? `Last talked ${ago(daysSince(last))}` : 'No conversations logged yet'}</div></div><button class="btn small" data-log="${p.id}">Log</button></li>`;
+          }).join('')}</ul>` : empty('You\'re caught up with everyone who has a check-in goal. Set one when editing a person.')}
+        </section>
+      </div>
+      <div class="stack">
+        <section class="card"><h2>Follow-ups</h2>
+          ${follows.length ? `<ul class="list">${follows.slice(0, 12).map(i => `<li><input type="checkbox" data-done="${i.id}" aria-label="Mark done"><div class="grow">${esc(i.followUp)}<div class="small muted">${peopleLinks(i.personIds)} · ${fmtDate(i.date)}</div></div></li>`).join('')}</ul>` : empty('Nothing to follow up on. Add a follow-up when you log a conversation.')}
+        </section>
+        <section class="card"><h2>Recent conversations</h2>
+          ${recent.length ? `<ul class="list">${recent.slice(0, 8).map(i => `<li>${avatar(firstOf(i))}<div class="grow">${peopleLinks(i.personIds)} <span class="small muted">· ${IX_TYPES[i.type]?.[0] || ''} ${fmtDate(i.date)}</span><div class="small" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(i.summary)}</div></div></li>`).join('')}</ul>` : empty('No conversations logged yet.')}
+        </section>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderPerson(p) {
+  const last = lastContact(p);
+  const chips = [`<span class="pill accent">${esc(p.relationship || 'Other')}</span>`, ...p.tags.map(t => `<span class="pill">${esc(t)}</span>`)];
+  const over = overdueBy(p);
+  const statBits = [last ? `Last talked ${ago(daysSince(last))}` : 'No conversations yet'];
+  const b = bday(p);
+  if (b) { const a = nextOccurrence(b.m, b.d, b.y); statBits.push(`Birthday ${a.days === 0 ? 'today 🎉' : 'in ' + a.days + ' days'}`); }
+  // Family birthdays coming up soon are worth asking about.
+  const famSoon = [
+    ...p.familyMembers.map(m => ({ name: m.name.split(/\s+/)[0], b: bday(m) })),
+    ...relativesOf(p).map(({ other }) => ({ name: other.firstName, b: bday(other) })),
+  ].filter(x => x.b).map(x => ({ ...x, days: nextOccurrence(x.b.m, x.b.d, x.b.y).days })).filter(x => x.days <= 14)
+   .sort((a, c) => a.days - c.days);
+  famSoon.forEach(x => statBits.push(`${esc(x.name)}'s birthday ${x.days === 0 ? 'today' : x.days === 1 ? 'tomorrow' : `in ${x.days} days`}`));
+  if (over != null) statBits.push(`<span style="color:var(--warn)">Time to check in</span>`);
+
+  const fact = (k, v) => v ? `<dt>${k}</dt><dd>${v}</dd>` : '';
+  const work = [p.jobTitle, p.company].filter(Boolean).map(esc).join(' at ');
+  const links = p.links.map(l => ({ l, href: safeUrl(l.value) })).filter(x => x.href)
+    .map(({ l, href }) => `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(l.label)}</a>`).join('');
+  const facts = [
+    fact('Nickname', esc(p.nickname)),
+    fact('Work', work),
+    ...p.phones.map(x => fact(`${esc(x.label)} phone`, `<a href="tel:${esc(x.value.replace(/[^\d+]/g, ''))}">${esc(x.value)}</a>`)),
+    ...p.emails.map(x => fact(`${esc(x.label)} email`, `<a href="mailto:${esc(x.value)}">${esc(x.value)}</a>`)),
+    fact('Online', links),
+    fact('Birthday', b ? fmtBirthday(b) : ''),
+    fact('Address', esc(p.address)),
+    fact('How we met', esc(p.howMet)),
+    fact('Check in', p.contactEvery ? esc(CHECKIN_LABEL[p.contactEvery] || `Every ${p.contactEvery} days`) : ''),
+  ].join('');
+
+  const myIx = ixFor(p);
+  const items = [
+    ...myIx.map(i => ({ kind: 'ix', date: i.date, obj: i })),
+    ...p.events.map(e => ({ kind: 'ev', date: e.date, obj: e })),
+  ].filter(x => ui.tl === 'all' || (ui.tl === 'ix' ? x.kind === 'ix' : x.kind === 'ev'))
+   .sort((a, b) => b.date.localeCompare(a.date) || (a.kind === 'ev' ? -1 : 1));
+
+  const tl = items.map(({ kind, obj }) => {
+    if (kind === 'ix') {
+      const [icon, label] = IX_TYPES[obj.type] || ['💬', 'Conversation'];
+      const others = peopleLinks(obj.personIds, p.id);
+      return `<li class="tl-item"><div class="tl-icon">${icon}</div>
+        <div class="tl-top"><span class="tl-title">${label}${others ? ` <span class="tl-with">with ${others}</span>` : ''}</span><span class="tl-date">${fmtDate(obj.date)}</span>
+          <span class="tl-actions"><button class="btn ghost small" data-edit-ix="${obj.id}">Edit</button><button class="btn ghost small danger" data-del-ix="${obj.id}">Delete</button></span></div>
+        <div class="tl-body">${esc(obj.summary)}</div>
+        ${obj.followUp ? `<label class="follow ${obj.followUpDone ? 'done' : ''}"><input type="checkbox" data-done="${obj.id}" ${obj.followUpDone ? 'checked' : ''}><span>${esc(obj.followUp)}</span></label>` : ''}
+      </li>`;
+    }
+    const [icon, label] = EV_TYPES[obj.type] || ['📌', 'Life event'];
+    return `<li class="tl-item event"><div class="tl-icon">${icon}</div>
+      <div class="tl-top"><span class="tl-title">${esc(obj.title)}</span><span class="tl-date">${fmtDate(obj.date)} · ${label}${obj.recurring ? ' · yearly' : ''}</span>
+        <span class="tl-actions"><button class="btn ghost small" data-edit-ev="${obj.id}">Edit</button><button class="btn ghost small danger" data-del-ev="${obj.id}">Delete</button></span></div>
+      ${obj.notes ? `<div class="tl-body">${esc(obj.notes)}</div>` : ''}
+      ${obj.howToShowUp ? `<div class="tl-body"><em>How to show up:</em> ${esc(obj.howToShowUp)}</div>` : ''}
+    </li>`;
+  }).join('');
+
+  const openFollows = myIx.filter(i => i.followUp && !i.followUpDone);
+
+  const tomAll = p.events.map(e => ({ e, st: eventState(e), anniv: lossAnniversary(e) })).filter(x => x.st || x.anniv);
+  const tomMain = tomAll.filter(x => x.st === 'prominent' || x.anniv)
+    .sort((a, b) => (b.e.visibility === 'pinned') - (a.e.visibility === 'pinned')
+      || (eventTone(a.e) === 'hard' ? -1 : 0) - (eventTone(b.e) === 'hard' ? -1 : 0)
+      || b.e.date.localeCompare(a.e.date));
+  const tomQuiet = tomAll.filter(x => !tomMain.includes(x));
+  const tomCard = ({ e, anniv }) => {
+    const [icon, label] = EV_TYPES[e.type] || ['📌', 'Life event'];
+    const pinned = e.visibility === 'pinned';
+    return `<div class="tom-card ${eventTone(e)}">
+      <div class="tom-icon" aria-hidden="true">${icon}</div>
+      <div class="grow">
+        <div class="tom-title">${esc(e.title)}</div>
+        <div class="tom-when">${when(e.date)} · ${fmtDate(e.date)} · ${label}${pinned ? ' · Pinned' : ''}</div>
+        ${anniv ? `<div class="tom-anniv">One year since this ${anniv.days === 0 ? 'is today' : anniv.days === 1 ? 'is tomorrow' : `in ${anniv.days} days`}</div>` : ''}
+        ${e.notes ? `<div class="tom-note"><span>What they shared</span>${esc(e.notes)}</div>` : ''}
+        ${e.howToShowUp ? `<div class="tom-note how"><span>How to show up</span>${esc(e.howToShowUp)}</div>` : ''}
+      </div>
+      <div class="tom-actions">
+        <button class="btn ghost small" data-pin-ev="${e.id}">${pinned ? 'Unpin' : 'Pin'}</button>
+        <button class="btn ghost small" data-hide-ev="${e.id}" title="Stop showing this here">Not now</button>
+        <button class="btn ghost small" data-edit-ev="${e.id}">Edit</button>
+      </div>
+    </div>`;
+  };
+  const tom = tomAll.length ? `<section class="tom" aria-label="Top of mind">
+    ${tomMain.map(tomCard).join('')}
+    ${tomQuiet.length ? `<div class="tom-quiet"><span class="lbl">Also remember:</span>${tomQuiet.map(({ e }) => `<button class="linkish" style="font-weight:500" data-edit-ev="${e.id}">${EV_TYPES[e.type]?.[0] || '📌'} ${esc(e.title)} <span class="muted">(${ago(daysSince(e.date))})</span></button>`).join('')}</div>` : ''}
+  </section>` : '';
+  const tlBtn = (k, l) => `<button data-tl="${k}" class="${ui.tl === k ? 'on' : ''}">${l}</button>`;
+
+  const famBday = b => b ? ` · 🎂 ${fmtBirthday(b)}` : '';
+  const famRows = [
+    ...relativesOf(p).sort((a, c) => a.other.name.localeCompare(c.other.name)).map(({ r, other, type }) => `<li>${avatar(other)}
+      <div class="grow">${personLink(other)}<div class="small muted">${relLabel(type)}${famBday(bday(other))}</div></div>
+      <span class="fam-actions"><button class="btn ghost small" data-fam-edit="rel|${r.id}">Edit</button><button class="btn ghost small danger" data-fam-del="rel|${r.id}">Remove</button></span></li>`),
+    ...p.familyMembers.map(m => `<li>${memberAvatar(m)}
+      <div class="grow"><strong>${esc(m.name)}</strong><div class="small muted">${relLabel(m.rel)}${famBday(bday(m))}</div>
+        ${m.note ? `<div class="small">${esc(m.note)}</div>` : ''}</div>
+      <span class="fam-actions">${m.rel !== 'pet' ? `<button class="btn ghost small" data-fam-promote="${m.id}" title="Give ${esc(m.name)} their own page in Circle">Add to Circle</button>` : ''}<button class="btn ghost small" data-fam-edit="mem|${m.id}">Edit</button><button class="btn ghost small danger" data-fam-del="mem|${m.id}">Remove</button></span></li>`),
+  ];
+  const famCard = `<section class="card"><h2>Family</h2>
+    ${famRows.length ? `<ul class="list">${famRows.join('')}</ul>` : ''}
+    ${p.family ? `<p class="note-text small" style="margin:${famRows.length ? '10px' : '0'} 0 0">${esc(p.family)}</p>` : ''}
+    ${!famRows.length && !p.family ? '<p class="muted small" style="margin:0">No family added yet.</p>' : ''}
+    <button class="btn small" style="margin-top:10px" data-act="addFamily">+ Add family member</button>
+  </section>`;
+
+  $('#main').innerHTML = `<div class="wrap">
+    <button class="btn back" data-act="home">← All people</button>
+    <div class="p-head">
+      ${avatar(p, 'lg')}
+      <div class="info"><h1>${esc(p.name)}${p.pronouns ? `<span class="pronouns">(${esc(p.pronouns)})</span>` : ''}</h1>
+        <div class="muted small">${statBits.join(' · ')}</div>
+        <div class="chips">${chips.join('')}</div>
+      </div>
+      <div class="p-actions">
+        <button class="btn primary" data-log="${p.id}">Log conversation</button>
+        <button class="btn" data-act="addEvent">Add life event</button>
+        <button class="btn" data-act="editPerson">Edit</button>
+        <button class="btn ghost danger" data-act="delPerson">Delete</button>
+      </div>
+    </div>
+    ${tom}
+    <div class="grid2 person-grid">
+      <div class="stack">
+        <section class="card"><h2>Details</h2>${facts ? `<dl class="facts">${facts}</dl>` : '<p class="muted small" style="margin:0">No details yet. Click Edit to add some.</p>'}</section>
+        ${famCard}
+        <section class="card"><h2>Interests</h2>${p.interests.length ? `<div class="chipset">${p.interests.map(i => `<span class="pill">${esc(i)}</span>`).join('')}</div>` : '<p class="muted small" style="margin:0">None yet.</p>'}</section>
+        ${p.notes ? `<section class="card"><h2>Notes</h2><p class="note-text">${esc(p.notes)}</p></section>` : ''}
+      </div>
+      <div class="stack">
+        ${openFollows.length ? `<section class="card"><h2>Ask about next time</h2><ul class="list">${openFollows.map(i => { const others = peopleLinks(i.personIds, p.id); return `<li><input type="checkbox" data-done="${i.id}" aria-label="Mark done"><div class="grow">${esc(i.followUp)}<div class="small muted">from ${fmtDate(i.date)}${others ? ` · with ${others}` : ''}</div></div></li>`; }).join('')}</ul></section>` : ''}
+        <section class="card"><h2>Timeline</h2>
+          <div class="tl-filter">${tlBtn('all', 'Everything')}${tlBtn('ix', 'Conversations')}${tlBtn('ev', 'Life events')}</div>
+          ${tl ? `<ul class="timeline">${tl}</ul>` : '<p class="muted small" style="margin:0">Nothing here yet. Log a conversation or add a life event.</p>'}
+        </section>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ---------- Dialogs ----------
+const TEXT_FIELDS = ['firstName', 'lastName', 'nickname', 'pronouns', 'relationship', 'company', 'jobTitle', 'howMet', 'address', 'family', 'notes'];
+const MULTI = {
+  phones: { labels: ['Mobile', 'Home', 'Work', 'Other'], type: 'tel', placeholder: 'Phone number' },
+  emails: { labels: ['Personal', 'Work', 'Other'], type: 'email', placeholder: 'name@example.com' },
+  links: { labels: ['LinkedIn', 'Facebook', 'Instagram', 'Website', 'Other'], type: 'text', placeholder: 'linkedin.com/in/…' },
+};
+function addRow(kind, item = {}) {
+  const cfg = MULTI[kind];
+  const labels = item.label && !cfg.labels.includes(item.label) ? [...cfg.labels, item.label] : cfg.labels;
+  const row = document.createElement('div');
+  row.className = 'multi-row';
+  row.innerHTML = `<select aria-label="Label">${labels.map(l => `<option ${l === item.label ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+    <input type="${cfg.type}" value="${esc(item.value || '')}" placeholder="${cfg.placeholder}" aria-label="${kind}">
+    <button type="button" class="btn ghost small" data-remove-row aria-label="Remove">✕</button>`;
+  $(`[data-multi=${kind}]`).appendChild(row);
+  return row;
+}
+const readRows = kind => [...$(`[data-multi=${kind}]`).children]
+  .map(r => ({ label: r.querySelector('select').value, value: r.querySelector('input').value.trim() })).filter(x => x.value);
+// Pick the link label from the address, e.g. facebook.com → Facebook.
+const LINK_SITES = { 'linkedin.com': 'LinkedIn', 'facebook.com': 'Facebook', 'fb.com': 'Facebook', 'instagram.com': 'Instagram' };
+$('[data-multi=links]').addEventListener('input', e => {
+  const row = e.target.closest('.multi-row');
+  if (!row || e.target.tagName !== 'INPUT') return;
+  const host = (safeUrl(e.target.value) || '').replace(/^https?:\/\/(www\.)?/, '').split('/')[0];
+  const label = Object.entries(LINK_SITES).find(([d]) => host === d || host.endsWith('.' + d))?.[1];
+  if (label) row.querySelector('select').value = label;
+  else if (host.includes('.')) row.querySelector('select').value = 'Website';
+});
+$('#personForm').addEventListener('click', e => {
+  const add = e.target.closest('[data-add]');
+  if (add) addRow(add.dataset.add).querySelector('input').focus();
+  const rm = e.target.closest('[data-remove-row]');
+  if (rm) rm.closest('.multi-row').remove();
+});
+
+function openPersonDlg(p) {
+  const f = $('#personForm');
+  f.reset();
+  f.dataset.id = p ? p.id : '';
+  $('#personDlgTitle').textContent = p ? `Edit ${p.name}` : 'Add person';
+  Object.keys(MULTI).forEach(k => { $(`[data-multi=${k}]`).innerHTML = ''; (p?.[k] || []).forEach(item => addRow(k, item)); });
+  if (!p?.phones.length) addRow('phones');
+  if (!p?.emails.length) addRow('emails');
+  if (p) {
+    TEXT_FIELDS.forEach(k => f[k].value = p[k] || '');
+    const b = bday(p);
+    if (b) { f.bMonth.value = String(b.m); f.bDay.value = String(b.d); f.bYear.value = b.y || ''; }
+    f.contactEvery.value = String(p.contactEvery || 0);
+    f.interests.value = p.interests.join(', ');
+    f.tags.value = p.tags.join(', ');
+  } else f.relationship.value = 'Friend';
+  $('#personDlg').showModal();
+}
+// Returns the stored birthday string, or throws a message for the user.
+function readBirthday(f) {
+  const m = Number(f.bMonth.value), d = Number(f.bDay.value), y = f.bYear.value.trim();
+  if (!m && !d && !y) return '';
+  if (!m || !d) throw 'Pick both a month and a day for the birthday.';
+  if (y && !/^\d{4}$/.test(y)) throw 'Birthday year should be four digits, or left blank.';
+  const check = new Date(y ? Number(y) : 2000, m - 1, d); // 2000 is a leap year, so Feb 29 is allowed without a year
+  if (check.getDate() !== d) throw `${MONTHS[m - 1]} doesn't have ${d} days${y ? ` in ${y}` : ''}.`;
+  if (y && check > new Date()) throw 'Birthday is in the future.';
+  const mmdd = `${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  return y ? `${y}-${mmdd}` : mmdd;
+}
+// Reads the birthday fields of a form, or shows the problem and returns null.
+function checkedBirthday(f) {
+  try { return readBirthday(f); } catch (msg) { f.bMonth.setCustomValidity(msg); f.bMonth.reportValidity(); return null; }
+}
+document.querySelectorAll('[name=bMonth], [name=bDay], [name=bYear]').forEach(el =>
+  el.addEventListener('input', () => el.form.bMonth.setCustomValidity('')));
+$('#personForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const f = e.target;
+  const vals = {};
+  TEXT_FIELDS.forEach(k => vals[k] = f[k].value.trim());
+  vals.birthday = checkedBirthday(f);
+  if (vals.birthday === null) return;
+  const badLink = readRows('links').find(l => !safeUrl(l.value));
+  if (badLink) { alert(`"${badLink.value}" doesn't look like a web link.`); return; }
+  Object.keys(MULTI).forEach(k => vals[k] = readRows(k));
+  vals.contactEvery = Number(f.contactEvery.value);
+  vals.interests = splitList(f.interests.value);
+  vals.tags = splitList(f.tags.value);
+  let p = f.dataset.id && getPerson(f.dataset.id);
+  if (p) Object.assign(p, vals);
+  else { p = { id: uid(), events: [], createdAt: todayStr(), ...vals }; data.people.push(p); }
+  p.name = fullName(p);
+  ui.selected = p.id;
+  $('#personDlg').close(); save(); render();
+});
+// Family members. `editing` is { kind: 'rel' | 'mem', id } when changing an existing entry.
+let famEditing = null;
+function syncFamForm() {
+  const f = $('#famForm');
+  const isPet = f.rel.value === 'pet';
+  if (isPet) f.linkTo.value = '';
+  f.linkTo.disabled = isPet;
+  const manual = !f.linkTo.value;
+  $('#famManual').style.display = manual ? '' : 'none';
+  f.name.required = manual;
+}
+function openFamDlg(edit) {
+  const p = getPerson(ui.selected);
+  const f = $('#famForm');
+  f.reset();
+  famEditing = edit || null;
+  const linked = new Set(relativesOf(p).map(x => x.other.id));
+  const rel = edit?.kind === 'rel' ? relativesOf(p).find(x => x.r.id === edit.id) : null;
+  const mem = edit?.kind === 'mem' ? p.familyMembers.find(m => m.id === edit.id) : null;
+  f.linkTo.innerHTML = '<option value="">Not in Circle (enter their details)</option>'
+    + sortedPeople().filter(q => q.id !== p.id && (!linked.has(q.id) || q.id === rel?.other.id))
+      .map(q => `<option value="${q.id}">${esc(q.name)}</option>`).join('');
+  $('#famDlgTitle').textContent = edit ? 'Edit family member' : `Add to ${p.firstName}'s family`;
+  $('#famRelLabel').textContent = `Their relationship to ${p.firstName}`;
+  if (rel) { f.linkTo.value = rel.other.id; f.rel.value = rel.type; }
+  else if (mem) {
+    f.rel.value = mem.rel; f.name.value = mem.name; f.note.value = mem.note || '';
+    const b = bday(mem);
+    if (b) { f.bMonth.value = String(b.m); f.bDay.value = String(b.d); f.bYear.value = b.y || ''; }
+  } else f.rel.value = 'child';
+  syncFamForm();
+  $('#famDlg').showModal();
+}
+$('#famForm [name=rel]').addEventListener('change', syncFamForm);
+$('#famForm [name=linkTo]').addEventListener('change', syncFamForm);
+$('#famForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const f = e.target;
+  const p = getPerson(ui.selected);
+  // Editing replaces the old entry, which also lets you switch between linked and not linked.
+  const removeOld = () => {
+    if (famEditing?.kind === 'rel') data.relations = data.relations.filter(r => r.id !== famEditing.id);
+    if (famEditing?.kind === 'mem') p.familyMembers = p.familyMembers.filter(m => m.id !== famEditing.id);
+  };
+  if (f.linkTo.value) {
+    removeOld();
+    data.relations.push({ id: uid(), from: p.id, to: f.linkTo.value, type: f.rel.value });
+  } else {
+    const birthday = checkedBirthday(f);
+    if (birthday === null) return;
+    const id = famEditing?.kind === 'mem' ? famEditing.id : uid();
+    removeOld();
+    p.familyMembers.push({ id, rel: f.rel.value, name: f.name.value.trim(), birthday, note: f.note.value.trim() });
+  }
+  $('#famDlg').close(); save(); render();
+});
+// Turn a family member into a full person in Circle, keeping the relationship.
+function promoteMember(p, id) {
+  const m = p.familyMembers.find(x => x.id === id);
+  const parts = m.name.split(/\s+/).filter(Boolean);
+  const q = normalize({ people: [{
+    id: uid(), firstName: parts.length > 1 ? parts.slice(0, -1).join(' ') : parts[0] || '', lastName: parts.length > 1 ? parts.at(-1) : '',
+    relationship: p.relationship === 'Family' ? 'Family' : 'Other', birthday: m.birthday, notes: m.note || '', events: [], createdAt: todayStr(),
+  }] }).people[0];
+  data.people.push(q);
+  data.relations.push({ id: uid(), from: p.id, to: q.id, type: m.rel });
+  p.familyMembers = p.familyMembers.filter(x => x !== m);
+  save(); render();
+}
+
+let ixPicked = [];
+function renderIxPeople() {
+  $('#ixPeople').innerHTML = ixPicked.map(id => {
+    const p = getPerson(id);
+    return `<span class="pill person-chip">${esc(p.name)}<button type="button" data-unpick="${id}" aria-label="Remove ${esc(p.name)}">✕</button></span>`;
+  }).join('');
+  const rest = sortedPeople().filter(p => !ixPicked.includes(p.id));
+  const sel = $('#ixAddPerson');
+  sel.innerHTML = `<option value="">${ixPicked.length ? '+ Add someone else…' : 'Choose a person…'}</option>`
+    + rest.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  sel.style.display = rest.length ? '' : 'none';
+  sel.setCustomValidity('');
+}
+$('#ixAddPerson').addEventListener('change', e => {
+  if (e.target.value) { ixPicked.push(e.target.value); renderIxPeople(); }
+});
+$('#ixPeople').addEventListener('click', e => {
+  const b = e.target.closest('[data-unpick]');
+  if (b) { ixPicked = ixPicked.filter(id => id !== b.dataset.unpick); renderIxPeople(); }
+});
+
+function openIxDlg(personId, ix) {
+  const f = $('#ixForm');
+  f.reset();
+  f.dataset.id = ix ? ix.id : '';
+  ixPicked = ix ? [...ix.personIds] : personId ? [personId] : [];
+  renderIxPeople();
+  $('#ixDoneField').style.display = ix ? '' : 'none';
+  $('#ixDlgTitle').textContent = ix ? 'Edit conversation' : 'Log a conversation';
+  f.date.value = ix ? ix.date : todayStr();
+  f.type.value = ix ? ix.type : 'call';
+  f.summary.value = ix ? ix.summary : '';
+  f.followUp.value = ix ? ix.followUp || '' : '';
+  f.followUpDone.checked = !!(ix && ix.followUpDone);
+  $('#ixDlg').showModal();
+}
+$('#ixForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const f = e.target;
+  if (!ixPicked.length) {
+    $('#ixAddPerson').setCustomValidity('Choose at least one person.');
+    $('#ixAddPerson').reportValidity();
+    return;
+  }
+  const vals = { personIds: [...ixPicked], date: f.date.value, type: f.type.value, summary: f.summary.value.trim(),
+    followUp: f.followUp.value.trim(), followUpDone: f.followUpDone.checked };
+  const existing = f.dataset.id && data.interactions.find(i => i.id === f.dataset.id);
+  if (existing) Object.assign(existing, vals); else data.interactions.push({ id: uid(), ...vals });
+  $('#ixDlg').close(); save(); render();
+});
+
+function openEvDlg(personId, ev) {
+  const f = $('#evForm');
+  f.reset();
+  f.dataset.id = ev ? ev.id : '';
+  f.personId.innerHTML = sortedPeople().map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  if (personId) f.personId.value = personId;
+  $('#evPersonField').style.display = personId ? 'none' : '';
+  $('#evDlgTitle').textContent = ev ? 'Edit life event' : personId ? `Add a life event for ${getPerson(personId).name}` : 'Note a life event';
+  f.date.value = ev ? ev.date : todayStr();
+  f.type.value = ev ? ev.type : 'milestone';
+  f.title.value = ev ? ev.title : '';
+  f.notes.value = ev ? ev.notes || '' : '';
+  f.howToShowUp.value = ev ? ev.howToShowUp || '' : '';
+  f.visibility.value = ev ? ev.visibility || 'auto' : 'auto';
+  f.recurring.checked = !!(ev && ev.recurring);
+  $('#evDlg').showModal();
+  (personId ? f.type : f.personId).focus();
+}
+$('#evForm [name=type]').addEventListener('change', e => {
+  // Weddings are usually worth an anniversary reminder.
+  if (e.target.value === 'wedding' && !$('#evForm').dataset.id) $('#evForm').recurring.checked = true;
+});
+$('#evForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const f = e.target;
+  const p = getPerson(f.personId.value);
+  if (!p) return;
+  const vals = { date: f.date.value, type: f.type.value, title: f.title.value.trim(), notes: f.notes.value.trim(),
+    howToShowUp: f.howToShowUp.value.trim(), visibility: f.visibility.value, recurring: f.recurring.checked };
+  const existing = f.dataset.id && p.events.find(x => x.id === f.dataset.id);
+  if (existing) Object.assign(existing, vals); else p.events.push({ id: uid(), ...vals });
+  $('#evDlg').close(); save(); render();
+});
+document.querySelectorAll('dialog [data-close]').forEach(b => b.addEventListener('click', () => b.closest('dialog').close()));
+
+// ---------- Import / export / sample ----------
+function exportData() {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `circle-backup-${todayStr()}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+$('#importInput').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    const incoming = normalize(JSON.parse(await file.text()));
+    if (data.people.length && !confirm(`Replace your ${data.people.length} people with the ${incoming.people.length} in this backup?`)) return;
+    data = incoming; ui.selected = null; save(); render();
+  } catch (err) { alert('Could not import: ' + err.message); }
+});
+function addSample() {
+  const shift = (days, yearsBack = 0) => {
+    const d = new Date(); d.setDate(d.getDate() + days); d.setFullYear(d.getFullYear() - yearsBack);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+  const alexId = uid(), devId = uid(), rosaId = uid(), luisId = uid();
+  // normalize() fills in derived fields (full name, phone/email lists) and moves
+  // each person's conversations into the shared list.
+  const sample = normalize({ people: [
+    { id: alexId, firstName: 'Alex', lastName: 'Rivera', pronouns: 'he/him', relationship: 'Colleague', nickname: '', phone: '', email: '',
+      birthday: shift(25).slice(5), company: 'Northwind', jobTitle: 'Product Manager',
+      address: '', family: '', howMet: 'Joined my team in 2023', contactEvery: 14,
+      familyMembers: [{ rel: 'spouse', name: 'Priya' }, { rel: 'child', name: 'Sofia', birthday: shift(6, 9), note: 'Plays travel soccer' },
+        { rel: 'child', name: 'Lucia', birthday: shift(-80, 6).slice(5) }],
+      interests: ['Cycling', 'Ohio State football'], tags: ['Sample', 'Work'], notes: '',
+      events: [{ id: uid(), date: shift(-21), type: 'loss', title: 'Father passed away', visibility: 'auto', recurring: false,
+        notes: 'Sudden heart attack. They were very close; his dad coached his little league team. Funeral was back home in Ohio.',
+        howToShowUp: 'Ask how he\'s doing, gently. Don\'t press for details. Offer flexibility on the Q4 deadline.' }],
+      interactions: [{ id: uid(), date: shift(-21), type: 'inperson', summary: '1:1. He told me his father passed away over the weekend. Taking the rest of the week off.', followUp: 'Check in when he\'s back', followUpDone: false }] },
+    { id: luisId, firstName: 'Luis', lastName: 'Alvarez', pronouns: 'he/him', relationship: 'Family', birthday: shift(52, 71),
+      address: 'Tucson, AZ', interests: ['Woodworking', 'Baseball'], tags: ['Sample', 'Mom\'s side'], events: [], contactEvery: 0 },
+    { id: rosaId, firstName: 'Rosa', lastName: 'Alvarez', pronouns: 'she/her', relationship: 'Family', nickname: 'Aunt Ro', phone: '555-0142', email: '', birthday: shift(9, 68),
+      address: 'Tucson, AZ', family: 'Her daughter Carmen lives nearby in Phoenix.', howMet: '', contactEvery: 30,
+      familyMembers: [{ rel: 'grandchild', name: 'Mia', birthday: shift(19, 7), note: 'Ballet recitals; loves dinosaurs' },
+        { rel: 'grandchild', name: 'Theo', birthday: shift(150, 4) }, { rel: 'pet', name: 'Churro', note: 'Chihuahua' }],
+      interests: ['Gardening', 'Telenovelas', 'Baking'], tags: ['Sample', 'Mom\'s side'], notes: 'Loves lemon cake. Allergic to cats.',
+      events: [{ id: uid(), date: shift(14, 45), type: 'wedding', title: 'Married Luis', notes: '', recurring: true },
+               { id: uid(), date: shift(-120), type: 'health', title: 'Knee replacement surgery', notes: 'Recovering well by summer.', recurring: false }],
+      interactions: [{ id: uid(), date: shift(-48), type: 'call', summary: 'Talked about her garden — tomatoes finally came in. Planning a trip to see Mia\'s recital.', followUp: 'Ask how the recital went', followUpDone: false }] },
+    { id: devId, firstName: 'Dev', lastName: 'Patel', pronouns: 'he/him', relationship: 'Close friend', nickname: '', phone: '', email: 'dev@example.com', birthday: shift(40, 41),
+      company: 'Studio X', jobTitle: 'Senior Designer', links: [{ label: 'LinkedIn', value: 'linkedin.com/in/example' }],
+      address: '', family: '', howMet: 'College roommate', contactEvery: 14,
+      familyMembers: [{ rel: 'partner', name: 'Jordan Lee' }],
+      interests: ['Climbing', 'Board games', 'Indie films'], tags: ['Sample', 'College'], notes: '',
+      events: [{ id: uid(), date: shift(-20), type: 'job', title: 'Started at a new design studio', notes: 'Senior role, much shorter commute.', recurring: false }],
+      interactions: [{ id: uid(), date: shift(-3), type: 'inperson', summary: 'Coffee downtown. He\'s loving the new job; thinking about adopting a dog.', followUp: 'Send him the dog trainer contact', followUpDone: false },
+                     { id: uid(), date: shift(-30), type: 'text', summary: 'Congratulated him on the offer.', followUp: '', followUpDone: false }] }
+  ], relations: [{ from: rosaId, to: luisId, type: 'spouse' }], interactions: [
+    { id: uid(), personIds: [alexId, devId], date: shift(-10), type: 'inperson', followUp: '', followUpDone: false,
+      summary: 'Board game night at my place. Alex was quiet at first but seemed glad to be out of the house. Dev brought chili.' }
+  ] });
+  data.people.push(...sample.people);
+  data.interactions.push(...sample.interactions);
+  data.relations.push(...sample.relations);
+  save(); render();
+}
+
+// ---------- Theme ----------
+function applyTheme(t) { if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme; }
+try { applyTheme(localStorage.getItem('circle-theme')); } catch (e) {}
+function toggleTheme() {
+  const dark = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+  const next = dark ? 'light' : 'dark';
+  applyTheme(next);
+  try { localStorage.setItem('circle-theme', next); } catch (e) {}
+}
+
+// ---------- Event wiring ----------
+function select(id) { ui.selected = id; ui.tl = 'all'; render(); $('#main').scrollTop = 0; }
+$('#brand').addEventListener('click', () => select(null));
+$('#addPersonBtn').addEventListener('click', () => openPersonDlg());
+$('#search').addEventListener('input', e => { ui.search = e.target.value.trim(); renderList(); });
+$('#relFilter').addEventListener('change', e => { ui.rel = e.target.value; renderList(); });
+$('#sortBy').addEventListener('change', e => {
+  ui.sort = e.target.value;
+  try { localStorage.setItem('circle-sort', ui.sort); } catch (err) {}
+  renderList();
+});
+$('#people').addEventListener('click', e => { const b = e.target.closest('[data-id]'); if (b) select(b.dataset.id); });
+$('#menuBtn').addEventListener('click', e => { e.stopPropagation(); $('#menuList').classList.toggle('open'); });
+document.addEventListener('click', () => $('#menuList').classList.remove('open'));
+
+const actions = {
+  addPerson: () => openPersonDlg(),
+  editPerson: () => openPersonDlg(getPerson(ui.selected)),
+  delPerson: () => {
+    const p = getPerson(ui.selected);
+    if (!confirm(`Delete ${p.name}? Their life events and one-on-one conversations will be deleted, and they'll be taken off any group conversations.`)) return;
+    data.people = data.people.filter(x => x !== p);
+    data.interactions.forEach(i => i.personIds = i.personIds.filter(id => id !== p.id));
+    data.interactions = data.interactions.filter(i => i.personIds.length);
+    data.relations = data.relations.filter(r => r.from !== p.id && r.to !== p.id);
+    ui.selected = null; save(); render();
+  },
+  addEvent: () => openEvDlg(ui.selected),
+  addFamily: () => openFamDlg(),
+  eventAny: () => openEvDlg(null),
+  logAny: () => openIxDlg(null),
+  home: () => select(null),
+  syncNow: () => syncNow(),
+  signOut: () => signOut(),
+  export: exportData,
+  import: () => $('#importInput').click(),
+  theme: toggleTheme,
+  sample: addSample,
+};
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-act],[data-open],[data-log],[data-tl],[data-edit-ix],[data-del-ix],[data-edit-ev],[data-del-ev],[data-pin-ev],[data-hide-ev],[data-fam-edit],[data-fam-del],[data-fam-promote]');
+  if (!t) return;
+  const d = t.dataset;
+  const p = getPerson(ui.selected);
+  if (d.act) actions[d.act]?.();
+  else if (d.open) select(d.open);
+  else if (d.log) openIxDlg(d.log);
+  else if (d.tl) { ui.tl = d.tl; render(); }
+  else if (d.editIx) openIxDlg(p.id, data.interactions.find(i => i.id === d.editIx));
+  else if (d.editEv) openEvDlg(p.id, p.events.find(x => x.id === d.editEv));
+  else if (d.famEdit) { const [kind, id] = d.famEdit.split('|'); openFamDlg({ kind, id }); }
+  else if (d.famPromote) promoteMember(p, d.famPromote);
+  else if (d.famDel) {
+    const [kind, id] = d.famDel.split('|');
+    if (kind === 'rel') {
+      const x = relativesOf(p).find(y => y.r.id === id);
+      if (confirm(`Unlink ${x.other.name} from ${p.name}? Both stay in Circle.`)) data.relations = data.relations.filter(r => r.id !== id);
+    } else {
+      const m = p.familyMembers.find(y => y.id === id);
+      if (confirm(`Remove ${m.name} from ${p.name}'s family?`)) p.familyMembers = p.familyMembers.filter(y => y !== m);
+    }
+    save(); render();
+  }
+  else if (d.pinEv || d.hideEv) {
+    const ev = p.events.find(x => x.id === (d.pinEv || d.hideEv));
+    ev.visibility = d.hideEv ? 'hidden' : ev.visibility === 'pinned' ? 'auto' : 'pinned';
+    save(); render();
+  }
+  else if (d.delIx) {
+    const ix = data.interactions.find(i => i.id === d.delIx);
+    const msg = ix.personIds.length > 1
+      ? `This conversation includes ${ix.personIds.length} people. Delete it for everyone?\n\nTo take only ${p.name} off it, use Edit instead.`
+      : 'Delete this conversation?';
+    if (confirm(msg)) { data.interactions = data.interactions.filter(i => i !== ix); save(); render(); }
+  }
+  else if (d.delEv && confirm('Delete this life event?')) { p.events = p.events.filter(x => x.id !== d.delEv); save(); render(); }
+});
+document.addEventListener('change', e => {
+  const d = e.target.dataset?.done;
+  if (!d) return;
+  const ix = data.interactions.find(i => i.id === d);
+  if (ix) { ix.followUpDone = e.target.checked; save(); render(); }
+});
+
+// ---------- Start ----------
+loadLocal();
+setStatus();
+render();
+startSync();
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  navigator.serviceWorker.register('sw.js').catch(e => console.warn('Offline support unavailable', e));
+}
+})();
+</script>
+</body>
+</html>
