@@ -158,8 +158,9 @@ main { overflow-y: auto; min-height: 0; padding: 24px; }
 h1 { font-size: 26px; margin: 0; letter-spacing: -.02em; }
 h2 { font-size: 15px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); font-weight: 600; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); }
-.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.stack { display: grid; gap: 16px; align-content: start; }
+/* minmax(0, …) stops one long line of text from stretching a column past the screen. */
+.grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-content: start; }
 .muted { color: var(--ink-3); }
 .small { font-size: 13px; }
 
@@ -256,14 +257,30 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
 
 .person-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); }
 @media (max-width: 860px) {
-  .grid2, .person-grid { grid-template-columns: 1fr; }
+  .grid2, .person-grid { grid-template-columns: minmax(0, 1fr); }
 }
+.tabbar { display: none; }
 @media (max-width: 720px) {
   .app { grid-template-columns: 1fr; }
+  /* Phone layout: one screen at a time, chosen by the tab bar (Home or People),
+     or a person's page when one is open. */
   body.show-detail aside.side { display: none; }
-  body:not(.show-detail) main { display: none; }
-  main { padding: 16px calc(16px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left)); }
-  .people { padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
+  body:not(.show-detail).tab-people main { display: none; }
+  body:not(.show-detail):not(.tab-people) aside.side { display: none; }
+  main { padding: 16px calc(16px + env(safe-area-inset-right)) calc(72px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left)); }
+  .people { padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
+  .tabbar {
+    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+    background: var(--panel); border-top: 1px solid var(--line);
+    padding: 4px calc(8px + env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom)) calc(8px + env(safe-area-inset-left));
+  }
+  .tabbar button {
+    flex: 1; border: 0; background: none; color: var(--ink-3); cursor: pointer;
+    display: grid; justify-items: center; gap: 2px; padding: 6px 0; font-size: 11px; font-weight: 600;
+  }
+  .tabbar button[aria-current="page"] { color: var(--accent); }
+  .tabbar svg { width: 24px; height: 24px; }
+  .toast { bottom: calc(80px + env(safe-area-inset-bottom)); }
   /* iOS zooms into any field with text smaller than 16px. */
   input, select, textarea { font-size: 16px; }
   .back { display: inline-block; }
@@ -326,6 +343,16 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
   </aside>
   <main id="main"></main>
 </div>
+<nav class="tabbar" aria-label="Sections">
+  <button data-tab="home">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9v11h14V9"/><path d="M10 20v-6h4v6"/></svg>
+    Home
+  </button>
+  <button data-tab="people">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8"/><path d="M18 14.8c2 .7 3.2 2.4 3.5 5.2"/></svg>
+    People
+  </button>
+</nav>
 
 <!-- Person dialog -->
 <dialog id="personDlg">
@@ -974,7 +1001,7 @@ function hardNow(p) {
 
 
 // ---------- UI state ----------
-const ui = { selected: null, search: '', rel: '', sort: 'first', tl: 'all' };
+const ui = { selected: null, search: '', rel: '', sort: 'first', tl: 'all', tab: 'home' };
 try { const s = localStorage.getItem('circle-sort'); if (s && $(`#sortBy option[value="${s}"]`)) ui.sort = s; } catch (e) {}
 $('#sortBy').value = ui.sort;
 
@@ -1029,6 +1056,10 @@ function render() {
   const p = ui.selected && getPerson(ui.selected);
   if (!p) { ui.selected = null; renderHome(); } else renderPerson(p);
   document.body.classList.toggle('show-detail', !!p);
+  document.body.classList.toggle('tab-people', ui.tab === 'people');
+  document.querySelectorAll('.tabbar [data-tab]').forEach(b => {
+    if (b.dataset.tab === ui.tab && !p) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+  });
   hydratePhotos($('#main'));
 }
 
@@ -1235,7 +1266,7 @@ function renderPerson(p) {
   </section>`;
 
   $('#main').innerHTML = `<div class="wrap">
-    <button class="btn back" data-act="home">← All people</button>
+    <button class="btn back" data-act="home">← ${ui.tab === 'people' ? 'People' : 'Home'}</button>
     <div class="p-head">
       ${avatar(p, 'lg')}
       <div class="info"><h1>${esc(p.name)}${p.pronouns ? `<span class="pronouns">(${esc(p.pronouns)})</span>` : ''}</h1>
@@ -1909,7 +1940,16 @@ function toggleTheme() {
 
 // ---------- Event wiring ----------
 function select(id) { ui.selected = id; ui.tl = 'all'; render(); $('#main').scrollTop = 0; }
-$('#brand').addEventListener('click', () => select(null));
+$('#brand').addEventListener('click', () => { ui.tab = 'home'; select(null); });
+// Phone tab bar: Home or People. Tapping a tab also closes any open person.
+document.querySelector('.tabbar').addEventListener('click', e => {
+  const b = e.target.closest('[data-tab]');
+  if (!b) return;
+  ui.tab = b.dataset.tab;
+  select(null);
+  window.scrollTo(0, 0);
+  $('#people').scrollTop = 0;
+});
 $('#addPersonBtn').addEventListener('click', () => openPersonDlg());
 $('#search').addEventListener('input', e => { ui.search = e.target.value.trim(); renderList(); });
 $('#relFilter').addEventListener('change', e => { ui.rel = e.target.value; renderList(); });
