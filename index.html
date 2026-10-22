@@ -481,9 +481,9 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
   <form id="impForm">
     <h3>Import contacts</h3>
     <div id="impStart" class="imp-start stack" style="gap:12px">
-      <p class="small" style="margin:0">Choose a contacts file (<strong>.vcf</strong>, also called a vCard). You'll get to pick who to bring in before anything is added.</p>
+      <p class="small" style="margin:0">Choose a contacts file (<strong>.vcf</strong>, also called a vCard). One file can hold all your contacts, and you can pick several files at once. You'll choose who to bring in before anything is added.</p>
       <ul>
-        <li><strong>iPhone, all contacts:</strong> in the Contacts app, tap <em>Lists</em>, long-press <em>All Contacts</em> (or any list), choose <em>Export</em> and save to Files.</li>
+        <li><strong>iPhone, all contacts in one file:</strong> in the Contacts app, tap <em>Lists</em> (top left), long-press <em>All Contacts</em> (or any list), choose <em>Export</em> and save to Files.</li>
         <li><strong>iPhone, one person:</strong> open them in Contacts → <em>Share Contact</em> → <em>Save to Files</em>.</li>
         <li><strong>Google Contacts:</strong> contacts.google.com → <em>Export</em> → <em>vCard</em>.</li>
         <li><strong>iCloud on a computer:</strong> icloud.com/contacts → select all → ⚙ → <em>Export vCard</em>.</li>
@@ -492,7 +492,7 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
         <button type="button" class="btn primary" id="impPickFile">Choose contacts file…</button>
         <button type="button" class="btn" id="impPickPhone" hidden>Choose from this phone</button>
       </div>
-      <input type="file" id="impFile" accept=".vcf,text/vcard,text/x-vcard" hidden>
+      <input type="file" id="impFile" accept=".vcf,text/vcard,text/x-vcard" multiple hidden>
       <p class="auth-error" id="impError" role="alert"></p>
     </div>
     <div id="impReview" class="stack" style="gap:12px" hidden>
@@ -1724,12 +1724,18 @@ function openImport() {
 $('#impForm [name=relationship]').innerHTML = RELATIONSHIPS.map(r => `<option>${r}</option>`).join('');
 $('#impPickFile').addEventListener('click', () => $('#impFile').click());
 $('#impFile').addEventListener('change', async e => {
-  const file = e.target.files[0];
+  const files = [...e.target.files];
   e.target.value = '';
-  if (!file) return;
+  if (!files.length) return;
   try {
-    const contacts = parseVCards(await file.text());
-    if (!contacts.length) throw new Error("No contacts found in that file. Make sure it's a .vcf (vCard) file.");
+    const all = (await Promise.all(files.map(f => f.text()))).flatMap(parseVCards);
+    // The same person can turn up in more than one file; keep the first copy.
+    const seen = new Set();
+    const contacts = all.filter(c => {
+      const key = `${fullName(c).toLowerCase()}|${digitsOf(c.phones[0]?.value || '')}|${(c.emails[0]?.value || '').toLowerCase()}`;
+      return !seen.has(key) && seen.add(key);
+    });
+    if (!contacts.length) throw new Error(`No contacts found in ${files.length === 1 ? 'that file' : 'those files'}. Make sure ${files.length === 1 ? "it's a" : "they're"} .vcf (vCard) ${files.length === 1 ? 'file' : 'files'}.`);
     showImportReview(contacts);
   } catch (err) { $('#impError').textContent = err.message; }
 });
