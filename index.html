@@ -2068,10 +2068,12 @@ async function loadInbox() {
   inbox = rows || [];
   if (canon(inbox) !== before) render();
 }
-let flushing = false;
+let flushing = false, flushAgain = false;
 async function flushQueue() {
-  if (!sync.user || flushing) return;
+  if (!sync.user) return;
+  if (flushing) { flushAgain = true; return; } // a note added mid-send goes right after
   flushing = true;
+  flushAgain = false;
   try {
     for (const item of loadQueue()) {
       const row = await invokeCapture({ text: item.text, source: item.source });
@@ -2079,8 +2081,8 @@ async function flushQueue() {
       inbox = [...inbox.filter(r => r.id !== row.id), row];
       render();
     }
-  } catch (e) { console.warn('Capture will retry later', e); }
-  finally { flushing = false; }
+  } catch (e) { console.warn('Capture will retry later', e); flushAgain = false; }
+  finally { flushing = false; if (flushAgain) flushQueue(); }
 }
 function queueNote(text, source) {
   saveQueue([...loadQueue(), { localId: uid(), text, source, created_at: new Date().toISOString() }]);
@@ -2100,7 +2102,7 @@ const SOURCE_LABEL = { 'quick-note': 'Quick note', voice: 'Voice note', share: '
 const RV_KIND = { conversation: 'Log conversation', follow_up: 'Follow-up', life_event: 'Life event', note: 'Add to notes' };
 function refName(ref) { const p = ref.id && getPerson(ref.id); return p ? p.name : `${ref.name || 'Someone'} (new)`; }
 function describeAction(a) {
-  const who = esc(a.people.map(refName).join(' & '));
+  const who = a.people.length ? esc(a.people.map(refName).join(' & ')) : '<em>someone</em>';
   if (a.kind === 'conversation') return `${IX_TYPES[a.interaction_type]?.[0] || '💬'} <strong>${who}</strong>${a.date && a.date !== todayStr() ? ` · ${fmtDay(a.date)}` : ''}: ${esc(a.summary)}`;
   if (a.kind === 'follow_up') return `✅ Follow up with <strong>${who}</strong>${a.due ? ` by <strong>${fmtDay(a.due)}</strong>` : ''}: ${esc(a.follow_up_text)}`;
   if (a.kind === 'life_event') return `${EV_TYPES[a.event_type]?.[0] || '📌'} <strong>${who}</strong>: ${esc(a.title)}${a.until ? ` · top of mind until ${fmtDay(a.until)}` : ''}`;
@@ -2114,10 +2116,13 @@ function inboxCard() {
     const when = new Date(r.created_at).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
     const raw = `<div class="inbox-raw">${esc(r.raw)}</div>`;
     if (r.status === 'ready' && r.suggestion?.actions?.length) {
-      return `<div class="inbox-item"><div class="small muted">${esc(SOURCE_LABEL[r.source] || 'Note')} · ${when}</div>
+      // A shared message often arrives without the sender's name: ask who it's about first.
+      const needsWho = r.suggestion.actions.some(a => !a.people.length);
+      return `<div class="inbox-item"><div class="small muted">${esc(SOURCE_LABEL[r.source] || 'Note')} · ${when}${needsWho ? ' · <strong>Who is this about?</strong>' : ''}</div>
         <ul class="inbox-actions">${r.suggestion.actions.map(a => `<li>${describeAction(a)}</li>`).join('')}</ul>${raw}
-        <div class="inbox-btns"><button class="btn primary small" data-inbox-approve="${r.id}">Approve</button>
-          <button class="btn small" data-inbox-review="${r.id}">Review</button>
+        <div class="inbox-btns">${needsWho ? `<button class="btn primary small" data-inbox-review="${r.id}">Choose who</button>`
+          : `<button class="btn primary small" data-inbox-approve="${r.id}">Approve</button>
+          <button class="btn small" data-inbox-review="${r.id}">Review</button>`}
           <button class="btn ghost small" data-inbox-discard="${r.id}">Discard</button></div></div>`;
     }
     const problem = r.status === 'ready' ? 'Nothing to add was found in this note.'
@@ -2191,7 +2196,12 @@ function personSelect(ref) {
   const known = ref.id && getPerson(ref.id);
   const opts = sortedPeople().map(p => `<option value="${p.id}" ${known && p.id === ref.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
   const newOpt = ref.name && !known ? `<option value="new:${esc(ref.name)}" selected>➕ New person: ${esc(ref.name)}</option>` : '';
-  return `<select data-rv-person aria-label="Person">${newOpt}${opts}</select>`;
+  // Nobody named in the note: start blank, with a box for someone who isn't in Circle yet.
+  if (!known && !ref.name) {
+    return `<div class="rv-person stack" style="gap:6px"><select data-rv-person data-blank aria-label="Person"><option value="" selected>Choose a person…</option>${opts}</select>
+      <input type="text" data-rv-newname placeholder="…or type the name of someone new" aria-label="New person's name"></div>`;
+  }
+  return `<div class="rv-person"><select data-rv-person aria-label="Person">${newOpt}${opts}</select></div>`;
 }
 function openReview(row) {
   reviewing = row;
@@ -2199,7 +2209,7 @@ function openReview(row) {
   const field = (label, html) => `<label class="field"><span>${label}</span>${html}</label>`;
   const opts = (map, sel) => Object.entries(map).map(([k, [i, l]]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${i} ${l}</option>`).join('');
   $('#rvActions').innerHTML = row.suggestion.actions.map((a, i) => {
-    const people = field(a.people.length > 1 ? 'People' : 'Person', a.people.map(personSelect).join(''));
+    const people = field(a.people.length > 1 ? 'People' : 'Person', (a.people.length ? a.people : [{ id: '', name: '' }]).map(personSelect).join(''));
     let rest = '';
     if (a.kind === 'conversation') rest = `<div class="field-row">${field('Date', `<input type="date" data-k="date" value="${esc(a.date)}">`)}${field('How', `<select data-k="interaction_type">${opts(IX_TYPES, a.interaction_type)}</select>`)}</div>`
       + field('What you talked about', `<textarea data-k="summary" rows="3">${esc(a.summary)}</textarea>`);
@@ -2217,17 +2227,37 @@ function openReview(row) {
 }
 $('#rvActions').addEventListener('change', e => {
   if (e.target.matches('[data-rv-on]')) e.target.closest('.rv-action').classList.toggle('off', !e.target.checked);
+  // Choosing who a note is about once fills in the other suggestions from it that are still blank.
+  if (e.target.matches('[data-rv-person][data-blank]') && e.target.value) {
+    $('#rvActions').querySelectorAll('[data-rv-person][data-blank]').forEach(s => { if (!s.value) s.value = e.target.value; });
+  }
+  e.target.setCustomValidity?.('');
+});
+$('#rvActions').addEventListener('input', e => {
+  if (!e.target.matches('[data-rv-newname]')) return;
+  e.target.closest('.rv-person').querySelector('[data-rv-person]').setCustomValidity('');
+  $('#rvActions').querySelectorAll('[data-rv-newname]').forEach(i => { if (i !== e.target && !i.closest('.rv-person').querySelector('select').value && (!i.value || i.dataset.copied)) { i.value = e.target.value; i.dataset.copied = '1'; } });
 });
 $('#rvForm').addEventListener('submit', e => {
   e.preventDefault();
   const actions = [];
+  let missing = null;
   $('#rvActions').querySelectorAll('.rv-action').forEach(box => {
     if (!box.querySelector('[data-rv-on]').checked) return;
     const a = structuredClone(reviewing.suggestion.actions[box.dataset.i]);
-    a.people = [...box.querySelectorAll('[data-rv-person]')].map(s => s.value.startsWith('new:') ? { id: '', name: s.value.slice(4) } : { id: s.value, name: getPerson(s.value)?.name || '' });
+    a.people = [...box.querySelectorAll('.rv-person')].map(wrap => {
+      const v = wrap.querySelector('[data-rv-person]').value;
+      if (v.startsWith('new:')) return { id: '', name: v.slice(4) };
+      if (v) return { id: v, name: getPerson(v)?.name || '' };
+      const typed = wrap.querySelector('[data-rv-newname]')?.value.trim();
+      if (typed) return { id: '', name: typed };
+      missing ||= wrap.querySelector('[data-rv-person]');
+      return null;
+    }).filter(Boolean);
     box.querySelectorAll('[data-k]').forEach(el => a[el.dataset.k] = el.value.trim());
     actions.push(a);
   });
+  if (missing) { missing.setCustomValidity('Choose who this is about, or type a new name.'); missing.reportValidity(); return; }
   $('#rvDlg').close();
   approveRow(reviewing, actions);
 });

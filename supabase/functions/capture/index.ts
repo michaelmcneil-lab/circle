@@ -80,11 +80,11 @@ Each suggestion is one action:
 - "life_event": something significant happening in the person's life: a loss or death, illness or surgery, new job, move, engagement or wedding, new baby, breakup, a hard time, a big trip, a milestone. Pick the closest event_type ("hardship" for a hard time or stress, "loss" for a death). title: a few words, e.g. "Going through a hard time". date: when it happened (today if not said). until: only if the note gives a time frame, e.g. "this week" means the coming Sunday; otherwise "". how_to_show_up: only if the note says how the user wants to support them; otherwise "". note: details they shared, otherwise "".
 - "note": a lasting fact worth remembering that isn't an event: preferences, interests, gift ideas, allergies, names of kids or pets.
 
-People: match each person to the directory below by full name, first name, nickname, or as a family member of someone listed. Use their id when you're confident. If the note names someone who isn't listed, or you can't tell which of several people it means, set id to "" and give the name as written. When the note is about a listed person's family member who isn't in the directory (a child, partner or pet), attach the action to the listed person and name the family member in the text.
+People: match each person to the directory below by full name, first name, nickname, or as a family member of someone listed. Use their id when you're confident. If the note names someone who isn't listed, or you can't tell which of several people it means, set id to "" and give the name as written. When the note is about a listed person's family member who isn't in the directory (a child, partner or pet), attach the action to the listed person and name the family member in the text. If you can't tell who a note is about at all (a shared message often arrives without the sender's name), still suggest the actions and leave people empty: the user will choose who it is.
 
 Screenshots: if images are attached (usually a text or WhatsApp conversation), work out who is speaking: messages on the right are from the user, messages on the left from the other person, whose name is usually at the top of the screen. Put a short transcript of the parts worth keeping in transcript, like "Tiz: Rough week, mom's in hospital / Me: So sorry, thinking of you". Leave transcript as "" when there are no images. A screenshot of a conversation is itself a "conversation", dated from the screenshot if it shows a date.
 
-Dates are YYYY-MM-DD, resolved using the calendar in the user's message ("Sunday" means the next Sunday after today). Leave any field that doesn't apply to an action as "". A conversation that reveals hard news can produce both a conversation and a life_event, but don't record the same fact twice. If nothing in the note is worth filing, return no actions.`;
+Dates are YYYY-MM-DD, resolved using the calendar in the user's message ("Sunday" means the next Sunday after today). Leave any field that doesn't apply to an action as "". A conversation that reveals hard news can produce both a conversation and a life_event, but don't record the same fact twice. Notes whose source is "share" or "screenshot" are messages the user deliberately chose to save: always file them, at least as a conversation summarizing the message, even if it seems minor. For other notes, if nothing is worth filing, return no actions.`;
 
 type Person = { id: string; name: string; nickname?: string; relationship?: string; company?: string; familyMembers?: { name: string; rel: string }[] };
 type Image = { media_type: string; data: string };
@@ -140,8 +140,7 @@ function cleanActions(raw: any, ids: Set<string>) {
     until: isDate(a.until) ? a.until : "",
     how_to_show_up: String(a.how_to_show_up ?? ""),
     note: String(a.note ?? ""),
-  // deno-lint-ignore no-explicit-any
-  })).filter((a: any) => a.people.length);
+  }));
 }
 
 function friendlyError(err: unknown): string {
@@ -151,7 +150,7 @@ function friendlyError(err: unknown): string {
   return (err instanceof Error ? err.message : String(err)).slice(0, 300);
 }
 
-async function sortNote(note: string, images: Image[], people: Person[], ctx: { today: string; weekday: string; timeZone: string }) {
+async function sortNote(note: string, source: string, images: Image[], people: Person[], ctx: { today: string; weekday: string; timeZone: string }) {
   const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!apiKey) throw new Error("the Anthropic API key hasn't been added to Supabase yet");
   const client = new Anthropic({ apiKey });
@@ -173,7 +172,7 @@ async function sortNote(note: string, images: Image[], people: Person[], ctx: { 
         ...images.map((img) => ({ type: "image", source: { type: "base64", ...img } })),
         {
           type: "text",
-          text: `Today is ${ctx.weekday}, ${ctx.today} (time zone ${ctx.timeZone}).\nCalendar:\n${calendarText(ctx.today)}\n\n<note>\n${note || "(no text, see the attached screenshot)"}\n</note>`,
+          text: `Source: ${source}\nToday is ${ctx.weekday}, ${ctx.today} (time zone ${ctx.timeZone}).\nCalendar:\n${calendarText(ctx.today)}\n\n<note>\n${note || "(no text, see the attached screenshot)"}\n</note>`,
         },
       ],
     }],
@@ -205,10 +204,11 @@ async function readBody(req: Request): Promise<{ body: any; images: Image[] }> {
   const type = req.headers.get("content-type") ?? "";
   if (!type.includes("multipart/form-data")) return { body: await req.json(), images: [] };
   const form = await req.formData();
-  const texts: string[] = [];
+  const typed: string[] = []; // what the user typed or said in the Shortcut ("text" field)
+  const texts: string[] = []; // what they shared ("file" fields)
   const images: Image[] = [];
   for (const [key, value] of form.entries()) {
-    if (typeof value === "string") { if (key === "text" || key === "file") texts.push(value); continue; }
+    if (typeof value === "string") { if (key === "text") typed.push(value); else if (key === "file") texts.push(value); continue; }
     const mediaType = value.type || "";
     if (mediaType.startsWith("image/")) {
       if (!IMAGE_TYPES.includes(mediaType)) throw new Error(`screenshots must be JPEG or PNG (this one is ${mediaType})`);
@@ -219,9 +219,12 @@ async function readBody(req: Request): Promise<{ body: any; images: Image[] }> {
     }
   }
   const source = form.get("source");
+  const myNote = typed.map((t) => t.trim()).filter(Boolean).join("\n");
+  const shared = texts.map((t) => t.trim()).filter(Boolean).join("\n\n");
   return {
     body: {
-      text: texts.join("\n\n"),
+      // Labelled, so Claude can tell the user's own words from the message they shared.
+      text: myNote && shared ? `My note: ${myNote}\n\nShared message:\n${shared}` : myNote || (shared ? `Shared message:\n${shared}` : ""),
       source: typeof source === "string" && source ? source : images.length ? "screenshot" : "share",
       timeZone: form.get("timeZone") ?? undefined,
     },
@@ -304,7 +307,7 @@ Deno.serve(async (req) => {
       const people: Person[] = doc?.data?.people ?? [];
       // Screenshots aren't stored. Their transcript becomes the note's text, so "Try again" still works.
       const typed = images.length ? String(body.text ?? "").trim() : row.raw;
-      const { transcript, actions } = await sortNote(typed, images, people, ctx);
+      const { transcript, actions } = await sortNote(typed, row.source, images, people, ctx);
       const raw = images.length ? [typed, transcript && `From the screenshot:\n${transcript}`].filter(Boolean).join("\n\n") : null;
       update = { status: "ready", suggestion: { actions }, error: null, ...(raw ? { raw } : {}) };
     } catch (err) {
