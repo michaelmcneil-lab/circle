@@ -252,6 +252,22 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
 .person-chip { font-size: 14px; padding: 3px 6px 3px 10px; background: var(--accent-soft); color: var(--ink); border-color: transparent; }
 .person-chip button { border: 0; background: none; color: var(--ink-2); cursor: pointer; padding: 0 2px 0 4px; }
 .tl-with { font-weight: 400; color: var(--ink-2); }
+.card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.fu-group { font-size: 12px; font-weight: 700; color: var(--ink-3); margin: 12px 0 0; }
+.card-head + .fu-group, h2 + .fu-group { margin-top: 0; }
+.quick-note textarea { min-height: 64px; }
+.quick-note .row { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-top: 8px; flex-wrap: wrap; }
+.inbox-card { border-left: 4px solid var(--accent); margin-bottom: 16px; }
+.inbox-item { border-top: 1px solid var(--line); padding: 12px 0; }
+.inbox-item:first-of-type { border-top: 0; padding-top: 4px; }
+.inbox-raw { font-size: 13px; color: var(--ink-3); white-space: pre-wrap; word-break: break-word; margin-top: 4px;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.inbox-actions { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; font-size: 14px; }
+.inbox-btns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.rv-action { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: grid; gap: 10px; }
+.rv-action.off { opacity: .5; }
+.rv-action.off .rv-fields { display: none; }
+.rv-head { display: flex; gap: 8px; align-items: center; font-weight: 600; }
 .fam-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; opacity: .6; }
 .list li:hover .fam-actions, .fam-actions:focus-within { opacity: 1; }
 
@@ -436,7 +452,10 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
       <label class="field"><span>How</span><select name="type"></select></label>
     </div>
     <label class="field"><span>What did you talk about?</span><textarea name="summary" rows="4" required></textarea></label>
-    <label class="field"><span>Follow up / ask about next time</span><input type="text" name="followUp" placeholder="e.g. Ask how the job interview went"></label>
+    <div class="field-row" style="grid-template-columns: 2fr 1fr">
+      <label class="field"><span>Follow up / ask about next time</span><input type="text" name="followUp" placeholder="e.g. Ask how the job interview went"></label>
+      <label class="field"><span>By (optional)</span><input type="date" name="followUpDue"></label>
+    </div>
     <label class="check" id="ixDoneField"><input type="checkbox" name="followUpDone"> Follow-up done</label>
     <div class="dlg-actions">
       <button type="button" class="btn" data-close>Cancel</button>
@@ -465,12 +484,45 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
           <option value="hidden">Don't show</option>
         </select>
       </label>
-      <span class="hint" style="align-self:end;padding-bottom:4px">Automatic: hard news stays up for 3 months, good news for 6 weeks.</span>
+      <label class="field"><span>Keep top of mind until</span><input type="date" name="until"></label>
     </div>
+    <span class="hint" style="margin-top:-6px">Leave the date empty for Automatic: hard news stays up for 3 months, good news for 6 weeks.</span>
     <label class="check"><input type="checkbox" name="recurring"> Remind me each year (anniversary)</label>
     <div class="dlg-actions">
       <button type="button" class="btn" data-close>Cancel</button>
       <button type="submit" class="btn primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Follow-up dialog -->
+<dialog id="fuDlg">
+  <form id="fuForm">
+    <h3 id="fuDlgTitle">Add follow-up</h3>
+    <label class="field" id="fuPersonField"><span>Who</span><select name="personId"></select></label>
+    <label class="field"><span>What to do or ask about</span><input type="text" name="text" required placeholder="e.g. Check in on how he's doing"></label>
+    <label class="field"><span>By (optional)</span><input type="date" name="due"></label>
+    <label class="check" id="fuDoneField"><input type="checkbox" name="done"> Done</label>
+    <div class="dlg-actions">
+      <button type="button" class="btn ghost danger" id="fuDelete">Delete</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="submit" class="btn primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Inbox review dialog -->
+<dialog id="rvDlg">
+  <form id="rvForm">
+    <h3>Review note</h3>
+    <p class="inbox-raw" id="rvRaw" style="-webkit-line-clamp:unset;display:block"></p>
+    <div id="rvActions" class="stack" style="gap:10px"></div>
+    <div class="dlg-actions">
+      <button type="button" class="btn ghost danger" id="rvDiscard">Discard</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="submit" class="btn primary">Approve</button>
     </div>
   </form>
 </dialog>
@@ -651,7 +703,7 @@ function ordinal(n) { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n 
 // Conversations live in one list so a single entry can include several people.
 // Relations link two people in Circle: { from, to, type } means "to is from's <type>".
 // Family members who aren't in Circle themselves (kids, pets) live on the person.
-let data = { version: 2, people: [], interactions: [], relations: [] };
+let data = { version: 2, people: [], interactions: [], relations: [], followUps: [] };
 let saveTimer = null;
 
 function normalize(d) {
@@ -683,6 +735,23 @@ function normalize(d) {
   const ids = new Set(d.people.map(p => p.id));
   d.interactions.forEach(i => { i.id ||= uid(); i.personIds = (i.personIds || []).filter(id => ids.has(id)); });
   d.interactions = d.interactions.filter(i => i.personIds.length);
+  // Follow-ups are their own list: { id, personIds, text, due ("" or a date), done, ixId? }.
+  // Older data kept one inside each conversation. The id is derived from the
+  // conversation so every device converts it to the same follow-up.
+  d.followUps = Array.isArray(d.followUps) ? d.followUps : [];
+  d.interactions.forEach(i => {
+    if (i.followUp && !d.followUps.some(f => f.ixId === i.id)) {
+      d.followUps.push({ id: `fu-${i.id}`, ixId: i.id, personIds: [...i.personIds], text: i.followUp, due: '', done: !!i.followUpDone });
+    }
+    delete i.followUp; delete i.followUpDone;
+  });
+  const ixIds = new Set(d.interactions.map(i => i.id));
+  d.followUps.forEach(f => {
+    f.id ||= uid(); f.text = String(f.text || ''); f.due ||= ''; f.done = !!f.done;
+    f.personIds = (f.personIds || []).filter(id => ids.has(id));
+    if (f.ixId && !ixIds.has(f.ixId)) delete f.ixId;
+  });
+  d.followUps = d.followUps.filter(f => f.personIds.length && f.text);
   d.relations = (Array.isArray(d.relations) ? d.relations : [])
     .filter(r => ids.has(r.from) && ids.has(r.to) && r.from !== r.to && FAMILY_REL[r.type]?.rev);
   d.relations.forEach(r => r.id ||= uid());
@@ -737,7 +806,7 @@ const canon = v => JSON.stringify(v, (k, x) => x && typeof x === 'object' && !Ar
   ? Object.fromEntries(Object.keys(x).sort().map(key => [key, x[key]])) : x);
 function mergeDocs(base, local, remote) {
   const out = {};
-  for (const key of ['people', 'interactions', 'relations']) {
+  for (const key of ['people', 'interactions', 'relations', 'followUps']) {
     const byId = arr => new Map((arr || []).map(x => [x.id, x]));
     const B = byId(base?.[key]), L = byId(local[key]), R = byId(remote[key]);
     out[key] = [];
@@ -795,6 +864,8 @@ async function syncNow() {
     }
     if (sync.dirty) sync.again = true;
     setStatus(sync.dirty ? 'syncing' : 'synced');
+    loadInbox();
+    flushQueue();
   } catch (e) {
     console.warn('Sync failed', e);
     setStatus('offline');
@@ -864,7 +935,8 @@ async function signOut() {
 function finishSignOut() {
   // Clear this device's copy so the next person to pick it up can't read it.
   sync.user = null;
-  [LS_KEY, SK.base, SK.rev, SK.dirty, SK.user].forEach(k => lsSet(k, null));
+  [LS_KEY, SK.base, SK.rev, SK.dirty, SK.user, CAPTURE_QUEUE, 'circle-quick-draft'].forEach(k => lsSet(k, null));
+  inbox = []; ui.quickDraft = '';
   data = normalize({ people: [] });
   ui.selected = null;
   document.body.classList.remove('signed-in');
@@ -876,6 +948,19 @@ window.addEventListener('online', () => syncNow());
 setInterval(() => { if (document.visibilityState === 'visible') syncNow(); }, 5 * 60 * 1000);
 const getPerson = id => data.people.find(p => p.id === id);
 const ixFor = p => data.interactions.filter(i => i.personIds.includes(p.id));
+const followUpsFor = p => data.followUps.filter(f => f.personIds.includes(p.id));
+const fmtDay = s => { const { y, m, d } = parseDate(s); return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }); };
+// rank: 0 overdue, 1 today, 2 within a week, 3 later, 4 no date.
+function dueInfo(f) {
+  if (!f.due) return { rank: 4, label: '', cls: '' };
+  const days = -daysSince(f.due);
+  if (days < 0) return { rank: 0, label: `Overdue · ${fmtDay(f.due)}`, cls: 'warn' };
+  if (days === 0) return { rank: 1, label: 'Today', cls: 'accent' };
+  if (days === 1) return { rank: 2, label: 'Tomorrow', cls: 'accent' };
+  if (days <= 6) return { rank: 2, label: fmtDay(f.due), cls: '' };
+  return { rank: 3, label: fmtDay(f.due), cls: '' };
+}
+const byDue = (a, b) => dueInfo(a).rank - dueInfo(b).rank || (a.due || '9999').localeCompare(b.due || '9999');
 // Everyone in Circle linked to p, with the relation as seen from p's side.
 const relativesOf = p => data.relations.flatMap(r =>
   r.from === p.id ? [{ r, other: getPerson(r.to), type: r.type }]
@@ -900,6 +985,8 @@ const eventTone = e => HARD_TYPES.has(e.type) ? 'hard' : 'happy';
 function eventState(e) {
   if (e.visibility === 'hidden') return null;
   if (e.visibility === 'pinned') return 'prominent';
+  // An explicit "until" date replaces the automatic window.
+  if (e.until) return daysSince(e.until) <= 0 && (daysSince(e.date) >= 0 || -daysSince(e.date) <= TOM_AHEAD) ? 'prominent' : null;
   const age = daysSince(e.date);
   if (age < 0) return -age <= TOM_AHEAD ? 'prominent' : null;
   const w = TOM_WINDOW[eventTone(e)];
@@ -1021,7 +1108,7 @@ function matches(p, q) {
   const hay = [p.name, p.nickname, p.company, p.jobTitle, p.address, p.notes, p.family, p.howMet, ...p.interests, ...p.tags,
     ...p.phones.map(x => x.value), ...p.emails.map(x => x.value),
     ...p.familyMembers.map(m => m.name + ' ' + (m.note || '')),
-    ...ixFor(p).map(i => i.summary + ' ' + (i.followUp || '')), ...p.events.map(e => e.title + ' ' + (e.notes || ''))].join(' ').toLowerCase();
+    ...ixFor(p).map(i => i.summary), ...followUpsFor(p).map(f => f.text), ...p.events.map(e => e.title + ' ' + (e.notes || ''))].join(' ').toLowerCase();
   return q.toLowerCase().split(/\s+/).every(w => hay.includes(w));
 }
 
@@ -1064,6 +1151,29 @@ function render() {
 }
 
 function personLink(p) { return `<button class="linkish" data-open="${p.id}">${esc(p.name)}</button>`; }
+function followUpRow(f, exceptId) {
+  const d = dueInfo(f);
+  const ix = f.ixId && data.interactions.find(i => i.id === f.ixId);
+  const sub = [peopleLinks(f.personIds, exceptId), ix ? `from ${fmtDate(ix.date)}` : ''].filter(Boolean).join(' · ');
+  return `<li><input type="checkbox" data-done="${f.id}" ${f.done ? 'checked' : ''} aria-label="Mark done">
+    <div class="grow">${esc(f.text)}${sub ? `<div class="small muted">${sub}</div>` : ''}</div>
+    ${d.label ? `<span class="pill ${d.cls}">${esc(d.label)}</span>` : ''}
+    <button class="btn ghost small" data-edit-fu="${f.id}">Edit</button></li>`;
+}
+// Follow-ups under "Due now / This week / Later / No date" headings, already sorted by byDue.
+function followUpGroups(list, exceptId, limit = Infinity) {
+  const names = ['Due now', 'Due now', 'This week', 'Later', 'No date'];
+  let html = '', group = null;
+  const shown = list.slice(0, limit);
+  for (const f of shown) {
+    const g = names[dueInfo(f).rank];
+    if (g !== group) { html += `${group === null ? '' : '</ul>'}<div class="fu-group">${g}</div><ul class="list">`; group = g; }
+    html += followUpRow(f, exceptId);
+  }
+  html += '</ul>';
+  if (list.length > shown.length) html += `<p class="small muted" style="margin:8px 0 0">and ${list.length - shown.length} more</p>`;
+  return html;
+}
 // Links to everyone in a conversation, optionally leaving out the person whose page this is.
 function peopleLinks(ids, except) {
   const links = ids.filter(id => id !== except).map(getPerson).filter(Boolean).map(personLink);
@@ -1114,11 +1224,12 @@ function renderHome() {
 
   const overdue = data.people.map(p => ({ p, over: overdueBy(p) })).filter(x => x.over != null).sort((a, b) => b.over - a.over);
   const byDateDesc = (a, b) => b.date.localeCompare(a.date);
-  const follows = data.interactions.filter(i => i.followUp && !i.followUpDone).sort(byDateDesc);
+  const follows = data.followUps.filter(f => !f.done).sort(byDue);
   const recent = [...data.interactions].sort(byDateDesc);
   const firstOf = i => getPerson(i.personIds[0]);
 
   const empty = t => `<p class="muted small" style="margin:0">${t}</p>`;
+  const qn = document.activeElement?.id === 'quickNote' ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
   main.innerHTML = `<div class="wrap">
     <div class="home-head">
       <div><h1>Hello again</h1><div class="muted">${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })} · ${data.people.length} ${data.people.length === 1 ? 'person' : 'people'} in your circle</div></div>
@@ -1127,6 +1238,8 @@ function renderHome() {
         <button class="btn primary" data-act="logAny">Log a conversation</button>
       </div>
     </div>
+    ${quickNoteCard()}
+    ${inboxCard()}
     ${hard.length ? `<section class="card hard-card" style="margin-bottom:16px"><h2>Going through something</h2>
       <ul class="list">${hard.map(({ p, e }) => `<li>${avatar(p)}<div class="grow">${personLink(p)}
         <div class="small">${EV_TYPES[e.type][0]} ${esc(e.title)} <span class="muted">· ${when(e.date).toLowerCase()}</span></div>
@@ -1134,19 +1247,19 @@ function renderHome() {
     </section>` : ''}
     <div class="grid2">
       <div class="stack">
+        <section class="card"><div class="card-head"><h2>Follow-ups</h2><button class="btn ghost small" data-act="addFollowUp">+ Add</button></div>
+          ${follows.length ? followUpGroups(follows, null, 12) : empty('Nothing to follow up on. Add one here or when you log a conversation.')}
+        </section>
         <section class="card"><h2>Coming up · next ${REMIND_DAYS} days</h2>
           ${upcoming.length ? `<ul class="list">${upcoming.map(u => `<li>${avatar(u.p)}<div class="grow">${personLink(u.p)}<div class="small muted">${u.label}</div></div><span class="pill ${u.days <= 7 ? 'accent' : ''}">${inDays(u.days)}</span></li>`).join('')}</ul>` : empty('No birthdays or anniversaries in the next month.')}
         </section>
+      </div>
+      <div class="stack">
         <section class="card"><h2>Time to check in</h2>
-          ${overdue.length ? `<ul class="list">${overdue.slice(0, 10).map(({ p, over }) => {
+          ${overdue.length ? `<ul class="list">${overdue.slice(0, 10).map(({ p }) => {
             const last = lastContact(p);
             return `<li>${avatar(p)}<div class="grow">${personLink(p)}<div class="small muted">${last ? `Last talked ${ago(daysSince(last))}` : 'No conversations logged yet'}</div></div><button class="btn small" data-log="${p.id}">Log</button></li>`;
           }).join('')}</ul>` : empty('You\'re caught up with everyone who has a check-in goal. Set one when editing a person.')}
-        </section>
-      </div>
-      <div class="stack">
-        <section class="card"><h2>Follow-ups</h2>
-          ${follows.length ? `<ul class="list">${follows.slice(0, 12).map(i => `<li><input type="checkbox" data-done="${i.id}" aria-label="Mark done"><div class="grow">${esc(i.followUp)}<div class="small muted">${peopleLinks(i.personIds)} · ${fmtDate(i.date)}</div></div></li>`).join('')}</ul>` : empty('Nothing to follow up on. Add a follow-up when you log a conversation.')}
         </section>
         <section class="card"><h2>Recent conversations</h2>
           ${recent.length ? `<ul class="list">${recent.slice(0, 8).map(i => `<li>${avatar(firstOf(i))}<div class="grow">${peopleLinks(i.personIds)} <span class="small muted">· ${IX_TYPES[i.type]?.[0] || ''} ${fmtDate(i.date)}</span><div class="small" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(i.summary)}</div></div></li>`).join('')}</ul>` : empty('No conversations logged yet.')}
@@ -1154,6 +1267,7 @@ function renderHome() {
       </div>
     </div>
   </div>`;
+  if (qn) { const t = $('#quickNote'); t.focus(); t.setSelectionRange(qn[0], qn[1]); }
 }
 
 function renderPerson(p) {
@@ -1203,7 +1317,7 @@ function renderPerson(p) {
         <div class="tl-top"><span class="tl-title">${label}${others ? ` <span class="tl-with">with ${others}</span>` : ''}</span><span class="tl-date">${fmtDate(obj.date)}</span>
           <span class="tl-actions"><button class="btn ghost small" data-edit-ix="${obj.id}">Edit</button><button class="btn ghost small danger" data-del-ix="${obj.id}">Delete</button></span></div>
         <div class="tl-body">${esc(obj.summary)}</div>
-        ${obj.followUp ? `<label class="follow ${obj.followUpDone ? 'done' : ''}"><input type="checkbox" data-done="${obj.id}" ${obj.followUpDone ? 'checked' : ''}><span>${esc(obj.followUp)}</span></label>` : ''}
+        ${data.followUps.filter(f => f.ixId === obj.id).map(f => `<label class="follow ${f.done ? 'done' : ''}"><input type="checkbox" data-done="${f.id}" ${f.done ? 'checked' : ''}><span>${esc(f.text)}${f.due ? ` <span class="muted">· by ${fmtDay(f.due)}</span>` : ''}</span></label>`).join('')}
       </li>`;
     }
     const [icon, label] = EV_TYPES[obj.type] || ['📌', 'Life event'];
@@ -1215,7 +1329,7 @@ function renderPerson(p) {
     </li>`;
   }).join('');
 
-  const openFollows = myIx.filter(i => i.followUp && !i.followUpDone);
+  const openFollows = followUpsFor(p).filter(f => !f.done).sort(byDue);
 
   const tomAll = p.events.map(e => ({ e, st: eventState(e), anniv: lossAnniversary(e) })).filter(x => x.st || x.anniv);
   const tomMain = tomAll.filter(x => x.st === 'prominent' || x.anniv)
@@ -1230,7 +1344,7 @@ function renderPerson(p) {
       <div class="tom-icon" aria-hidden="true">${icon}</div>
       <div class="grow">
         <div class="tom-title">${esc(e.title)}</div>
-        <div class="tom-when">${when(e.date)} · ${fmtDate(e.date)} · ${label}${pinned ? ' · Pinned' : ''}</div>
+        <div class="tom-when">${when(e.date)} · ${fmtDate(e.date)} · ${label}${pinned ? ' · Pinned' : e.until ? ` · until ${fmtDay(e.until)}` : ''}</div>
         ${anniv ? `<div class="tom-anniv">One year since this ${anniv.days === 0 ? 'is today' : anniv.days === 1 ? 'is tomorrow' : `in ${anniv.days} days`}</div>` : ''}
         ${e.notes ? `<div class="tom-note"><span>What they shared</span>${esc(e.notes)}</div>` : ''}
         ${e.howToShowUp ? `<div class="tom-note how"><span>How to show up</span>${esc(e.howToShowUp)}</div>` : ''}
@@ -1289,7 +1403,8 @@ function renderPerson(p) {
         ${p.notes ? `<section class="card"><h2>Notes</h2><p class="note-text">${esc(p.notes)}</p></section>` : ''}
       </div>
       <div class="stack">
-        ${openFollows.length ? `<section class="card"><h2>Ask about next time</h2><ul class="list">${openFollows.map(i => { const others = peopleLinks(i.personIds, p.id); return `<li><input type="checkbox" data-done="${i.id}" aria-label="Mark done"><div class="grow">${esc(i.followUp)}<div class="small muted">from ${fmtDate(i.date)}${others ? ` · with ${others}` : ''}</div></div></li>`; }).join('')}</ul></section>` : ''}
+        <section class="card"><div class="card-head"><h2>Follow-ups</h2><button class="btn ghost small" data-act="addFollowUp">+ Add</button></div>
+          ${openFollows.length ? followUpGroups(openFollows, p.id) : '<p class="muted small" style="margin:0">Nothing to follow up on.</p>'}</section>
         <section class="card"><h2>Timeline</h2>
           <div class="tl-filter">${tlBtn('all', 'Everything')}${tlBtn('ix', 'Conversations')}${tlBtn('ev', 'Life events')}</div>
           ${tl ? `<ul class="timeline">${tl}</ul>` : '<p class="muted small" style="margin:0">Nothing here yet. Log a conversation or add a life event.</p>'}
@@ -1544,8 +1659,11 @@ function openIxDlg(personId, ix) {
   f.date.value = ix ? ix.date : todayStr();
   f.type.value = ix ? ix.type : 'call';
   f.summary.value = ix ? ix.summary : '';
-  f.followUp.value = ix ? ix.followUp || '' : '';
-  f.followUpDone.checked = !!(ix && ix.followUpDone);
+  const fu = ix && data.followUps.find(x => x.ixId === ix.id);
+  f.followUp.value = fu ? fu.text : '';
+  f.followUpDue.value = fu ? fu.due : '';
+  f.followUpDone.checked = !!fu?.done;
+  $('#ixDoneField').style.display = fu ? '' : 'none';
   $('#ixDlg').showModal();
 }
 $('#ixForm').addEventListener('submit', e => {
@@ -1556,10 +1674,15 @@ $('#ixForm').addEventListener('submit', e => {
     $('#ixAddPerson').reportValidity();
     return;
   }
-  const vals = { personIds: [...ixPicked], date: f.date.value, type: f.type.value, summary: f.summary.value.trim(),
-    followUp: f.followUp.value.trim(), followUpDone: f.followUpDone.checked };
-  const existing = f.dataset.id && data.interactions.find(i => i.id === f.dataset.id);
-  if (existing) Object.assign(existing, vals); else data.interactions.push({ id: uid(), ...vals });
+  const vals = { personIds: [...ixPicked], date: f.date.value, type: f.type.value, summary: f.summary.value.trim() };
+  let ix = f.dataset.id && data.interactions.find(i => i.id === f.dataset.id);
+  if (ix) Object.assign(ix, vals); else { ix = { id: uid(), ...vals }; data.interactions.push(ix); }
+  // The follow-up typed here lives in the follow-up list, linked back to this conversation.
+  const text = f.followUp.value.trim();
+  const fu = data.followUps.find(x => x.ixId === ix.id);
+  if (text && fu) Object.assign(fu, { text, due: f.followUpDue.value, done: f.followUpDone.checked, personIds: [...ix.personIds] });
+  else if (text) data.followUps.push({ id: uid(), ixId: ix.id, personIds: [...ix.personIds], text, due: f.followUpDue.value, done: false });
+  else if (fu) data.followUps = data.followUps.filter(x => x !== fu);
   $('#ixDlg').close(); save(); render();
 });
 
@@ -1578,6 +1701,7 @@ function openEvDlg(personId, ev) {
   f.howToShowUp.value = ev ? ev.howToShowUp || '' : '';
   f.visibility.value = ev ? ev.visibility || 'auto' : 'auto';
   f.recurring.checked = !!(ev && ev.recurring);
+  f.until.value = ev?.until || '';
   $('#evDlg').showModal();
   (personId ? f.type : f.personId).focus();
 }
@@ -1591,10 +1715,44 @@ $('#evForm').addEventListener('submit', e => {
   const p = getPerson(f.personId.value);
   if (!p) return;
   const vals = { date: f.date.value, type: f.type.value, title: f.title.value.trim(), notes: f.notes.value.trim(),
-    howToShowUp: f.howToShowUp.value.trim(), visibility: f.visibility.value, recurring: f.recurring.checked };
+    howToShowUp: f.howToShowUp.value.trim(), visibility: f.visibility.value, recurring: f.recurring.checked, until: f.until.value };
   const existing = f.dataset.id && p.events.find(x => x.id === f.dataset.id);
   if (existing) Object.assign(existing, vals); else p.events.push({ id: uid(), ...vals });
   $('#evDlg').close(); save(); render();
+});
+
+function openFuDlg(personId, fu) {
+  const f = $('#fuForm');
+  f.reset();
+  f.dataset.id = fu ? fu.id : '';
+  f.personId.innerHTML = sortedPeople().map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  const who = fu ? fu.personIds[0] : personId;
+  if (who) f.personId.value = who;
+  // A follow-up from a group conversation keeps its people; only single-person ones can be moved.
+  $('#fuPersonField').style.display = (fu && fu.personIds.length > 1) || (!fu && personId) ? 'none' : '';
+  $('#fuDlgTitle').textContent = fu ? 'Edit follow-up' : personId ? `Follow up with ${getPerson(personId).name}` : 'Add follow-up';
+  f.text.value = fu?.text || '';
+  f.due.value = fu?.due || '';
+  f.done.checked = !!fu?.done;
+  $('#fuDoneField').style.display = fu ? '' : 'none';
+  $('#fuDelete').hidden = !fu;
+  $('#fuDlg').showModal();
+  f.text.focus();
+}
+$('#fuForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const f = e.target;
+  const vals = { text: f.text.value.trim(), due: f.due.value, done: f.done.checked };
+  const fu = f.dataset.id && data.followUps.find(x => x.id === f.dataset.id);
+  if (fu) { Object.assign(fu, vals); if (fu.personIds.length <= 1) fu.personIds = [f.personId.value]; }
+  else data.followUps.push({ id: uid(), personIds: [f.personId.value], ...vals });
+  $('#fuDlg').close(); save(); render();
+});
+$('#fuDelete').addEventListener('click', () => {
+  const id = $('#fuForm').dataset.id;
+  if (!confirm('Delete this follow-up?')) return;
+  data.followUps = data.followUps.filter(x => x.id !== id);
+  $('#fuDlg').close(); save(); render();
 });
 document.querySelectorAll('dialog [data-close]').forEach(b => b.addEventListener('click', () => b.closest('dialog').close()));
 
@@ -1862,6 +2020,222 @@ $('#impForm').addEventListener('submit', async e => {
   toast(parts.join(', ') + '.');
 });
 
+// ---------- Capture: Quick note → Inbox → review ----------
+// A note is sent to the "capture" function in Supabase, which asks Claude to turn
+// it into suggested changes and stores them in the circle_inbox table. Nothing
+// changes in Circle until it's approved here. Notes wait on this device
+// (CAPTURE_QUEUE) until they've been handed over, so going offline loses nothing.
+const CAPTURE_QUEUE = 'circle-capture-queue';
+let inbox = []; // circle_inbox rows: { id, created_at, source, raw, status, suggestion, error }
+const loadQueue = () => { try { return JSON.parse(lsGet(CAPTURE_QUEUE) || '[]'); } catch (e) { return []; } };
+const saveQueue = q => lsSet(CAPTURE_QUEUE, q.length ? JSON.stringify(q) : null);
+ui.quickDraft = lsGet('circle-quick-draft') || '';
+
+function captureContext() {
+  return { today: todayStr(), weekday: new Date().toLocaleDateString('en-US', { weekday: 'long' }), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone };
+}
+async function invokeCapture(body) {
+  const { data: row, error } = await sync.client.functions.invoke('capture', { body: { ...captureContext(), ...body } });
+  if (error) throw error;
+  return row;
+}
+async function loadInbox() {
+  if (!sync.user) return;
+  const { data: rows, error } = await sync.client.from('circle_inbox').select('id, created_at, source, raw, status, suggestion, error').order('created_at');
+  if (error) { console.warn('Inbox not loaded', error); return; }
+  const before = canon(inbox);
+  inbox = rows || [];
+  if (canon(inbox) !== before) render();
+}
+let flushing = false;
+async function flushQueue() {
+  if (!sync.user || flushing) return;
+  flushing = true;
+  try {
+    for (const item of loadQueue()) {
+      const row = await invokeCapture({ text: item.text, source: item.source });
+      saveQueue(loadQueue().filter(x => x.localId !== item.localId));
+      inbox = [...inbox.filter(r => r.id !== row.id), row];
+      render();
+    }
+  } catch (e) { console.warn('Capture will retry later', e); }
+  finally { flushing = false; }
+}
+function queueNote(text, source) {
+  saveQueue([...loadQueue(), { localId: uid(), text, source, created_at: new Date().toISOString() }]);
+  render();
+  flushQueue();
+}
+
+function quickNoteCard() {
+  if (!syncEnabled) return '';
+  return `<section class="card quick-note" style="margin-bottom:16px"><h2>Quick note</h2>
+    <textarea id="quickNote" aria-label="Quick note" placeholder="Who did you talk to, and what's going on? For example: Spoke with Tiz, he's going through a hard time this week. Follow up Sunday.">${esc(ui.quickDraft)}</textarea>
+    <div class="row"><span class="hint">On iPhone, tap the microphone on the keyboard to talk instead of type. Notes go to your Inbox for review.</span>
+      <button class="btn primary" data-act="sendQuickNote">Add to Inbox</button></div>
+  </section>`;
+}
+const RV_KIND = { conversation: 'Log conversation', follow_up: 'Follow-up', life_event: 'Life event', note: 'Add to notes' };
+function refName(ref) { const p = ref.id && getPerson(ref.id); return p ? p.name : `${ref.name || 'Someone'} (new)`; }
+function describeAction(a) {
+  const who = esc(a.people.map(refName).join(' & '));
+  if (a.kind === 'conversation') return `${IX_TYPES[a.interaction_type]?.[0] || '💬'} <strong>${who}</strong>${a.date && a.date !== todayStr() ? ` · ${fmtDay(a.date)}` : ''}: ${esc(a.summary)}`;
+  if (a.kind === 'follow_up') return `✅ Follow up with <strong>${who}</strong>${a.due ? ` by <strong>${fmtDay(a.due)}</strong>` : ''}: ${esc(a.follow_up_text)}`;
+  if (a.kind === 'life_event') return `${EV_TYPES[a.event_type]?.[0] || '📌'} <strong>${who}</strong>: ${esc(a.title)}${a.until ? ` · top of mind until ${fmtDay(a.until)}` : ''}`;
+  return `📝 Note for <strong>${who}</strong>: ${esc(a.note)}`;
+}
+function inboxCard() {
+  const queued = loadQueue();
+  if (!inbox.length && !queued.length) return '';
+  const stale = r => r.status === 'processing' && Date.now() - new Date(r.created_at).getTime() > 2 * 60 * 1000;
+  const item = r => {
+    const when = new Date(r.created_at).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+    const raw = `<div class="inbox-raw">${esc(r.raw)}</div>`;
+    if (r.status === 'ready' && r.suggestion?.actions?.length) {
+      return `<div class="inbox-item"><div class="small muted">${esc(r.source === 'quick-note' ? 'Quick note' : r.source || 'Note')} · ${when}</div>
+        <ul class="inbox-actions">${r.suggestion.actions.map(a => `<li>${describeAction(a)}</li>`).join('')}</ul>${raw}
+        <div class="inbox-btns"><button class="btn primary small" data-inbox-approve="${r.id}">Approve</button>
+          <button class="btn small" data-inbox-review="${r.id}">Review</button>
+          <button class="btn ghost small" data-inbox-discard="${r.id}">Discard</button></div></div>`;
+    }
+    const problem = r.status === 'ready' ? 'Nothing to add was found in this note.'
+      : r.status === 'processing' && !stale(r) ? 'Sorting…'
+      : `Couldn't sort this note${r.error ? `: ${esc(r.error)}` : '.'}`;
+    return `<div class="inbox-item"><div class="small muted">${when} · ${problem}</div>${raw}
+      <div class="inbox-btns">${r.status !== 'processing' || stale(r) ? `<button class="btn small" data-inbox-retry="${r.id}">Try again</button>` : ''}
+        <button class="btn ghost small" data-inbox-discard="${r.id}">Discard</button></div></div>`;
+  };
+  const queuedItem = q => `<div class="inbox-item"><div class="small muted">Waiting to send · it goes as soon as you're online</div><div class="inbox-raw">${esc(q.text)}</div>
+    <div class="inbox-btns"><button class="btn ghost small" data-queue-discard="${q.localId}">Discard</button></div></div>`;
+  return `<section class="card inbox-card"><h2>Inbox · ${inbox.length + queued.length}</h2>${queued.map(queuedItem).join('')}${inbox.map(item).join('')}</section>`;
+}
+
+// Turns approved actions into Circle entries. Names Claude couldn't match become new people.
+function applyActions(actions) {
+  const created = new Map();
+  const resolve = ref => {
+    if (ref.id && getPerson(ref.id)) return ref.id;
+    const name = String(ref.name || '').trim();
+    if (!name) return null;
+    const key = name.toLowerCase();
+    if (!created.has(key)) {
+      const parts = name.split(/\s+/);
+      const p = normalize({ people: [{ id: uid(), firstName: parts.length > 1 ? parts.slice(0, -1).join(' ') : parts[0], lastName: parts.length > 1 ? parts.at(-1) : '',
+        relationship: 'Friend', events: [], createdAt: todayStr() }] }).people[0];
+      data.people.push(p);
+      created.set(key, p.id);
+    }
+    return created.get(key);
+  };
+  const today = todayStr();
+  const touched = new Set();
+  let lastIx = null;
+  for (const a of actions) {
+    const ids = [...new Set(a.people.map(resolve).filter(Boolean))];
+    if (!ids.length) continue;
+    ids.forEach(id => touched.add(id));
+    if (a.kind === 'conversation') {
+      lastIx = { id: uid(), personIds: ids, date: a.date || today, type: IX_TYPES[a.interaction_type] ? a.interaction_type : 'inperson', summary: a.summary || '' };
+      data.interactions.push(lastIx);
+    } else if (a.kind === 'follow_up' && a.follow_up_text) {
+      // A follow-up noted alongside a conversation with the same people is linked to it.
+      const link = lastIx && ids.every(id => lastIx.personIds.includes(id)) ? { ixId: lastIx.id } : {};
+      data.followUps.push({ id: uid(), personIds: ids, text: a.follow_up_text, due: a.due || '', done: false, ...link });
+    } else if (a.kind === 'life_event' && a.title) {
+      for (const id of ids) getPerson(id).events.push({ id: uid(), date: a.date || today, type: EV_TYPES[a.event_type] ? a.event_type : 'other',
+        title: a.title, notes: a.note || '', howToShowUp: a.how_to_show_up || '', until: a.until || '', visibility: 'auto', recurring: false });
+    } else if (a.kind === 'note' && a.note) {
+      for (const id of ids) { const p = getPerson(id); p.notes = [p.notes, `${fmtDate(today)}: ${a.note}`].filter(Boolean).join('\n'); }
+    }
+  }
+  return { people: [...touched].map(id => getPerson(id).name), created: created.size };
+}
+async function removeInboxRow(id) {
+  inbox = inbox.filter(r => r.id !== id);
+  render();
+  const { error } = await sync.client.from('circle_inbox').delete().eq('id', id);
+  if (error) { console.warn(error); toast("Couldn't clear that note from the Inbox. It may reappear."); }
+}
+function approveRow(row, actions) {
+  const res = applyActions(actions);
+  save();
+  removeInboxRow(row.id);
+  toast(res.people.length ? `Added to ${res.people.join(', ')}${res.created ? ` (${res.created} new ${res.created === 1 ? 'person' : 'people'})` : ''}.` : 'Nothing was added.');
+}
+
+// Review dialog: every suggested change can be switched off or corrected before approving.
+let reviewing = null;
+function personSelect(ref) {
+  const known = ref.id && getPerson(ref.id);
+  const opts = sortedPeople().map(p => `<option value="${p.id}" ${known && p.id === ref.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+  const newOpt = ref.name && !known ? `<option value="new:${esc(ref.name)}" selected>➕ New person: ${esc(ref.name)}</option>` : '';
+  return `<select data-rv-person aria-label="Person">${newOpt}${opts}</select>`;
+}
+function openReview(row) {
+  reviewing = row;
+  $('#rvRaw').textContent = row.raw;
+  const field = (label, html) => `<label class="field"><span>${label}</span>${html}</label>`;
+  const opts = (map, sel) => Object.entries(map).map(([k, [i, l]]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${i} ${l}</option>`).join('');
+  $('#rvActions').innerHTML = row.suggestion.actions.map((a, i) => {
+    const people = field(a.people.length > 1 ? 'People' : 'Person', a.people.map(personSelect).join(''));
+    let rest = '';
+    if (a.kind === 'conversation') rest = `<div class="field-row">${field('Date', `<input type="date" data-k="date" value="${esc(a.date)}">`)}${field('How', `<select data-k="interaction_type">${opts(IX_TYPES, a.interaction_type)}</select>`)}</div>`
+      + field('What you talked about', `<textarea data-k="summary" rows="3">${esc(a.summary)}</textarea>`);
+    if (a.kind === 'follow_up') rest = field('Follow up', `<input type="text" data-k="follow_up_text" value="${esc(a.follow_up_text)}">`) + field('By', `<input type="date" data-k="due" value="${esc(a.due)}">`);
+    if (a.kind === 'life_event') rest = `<div class="field-row">${field('Type', `<select data-k="event_type">${opts(EV_TYPES, a.event_type)}</select>`)}${field('Date', `<input type="date" data-k="date" value="${esc(a.date)}">`)}</div>`
+      + field('What happened', `<input type="text" data-k="title" value="${esc(a.title)}">`)
+      + field('Keep top of mind until', `<input type="date" data-k="until" value="${esc(a.until)}">`)
+      + field('How to show up', `<textarea data-k="how_to_show_up" rows="2">${esc(a.how_to_show_up)}</textarea>`)
+      + field('What they shared', `<textarea data-k="note" rows="2">${esc(a.note)}</textarea>`);
+    if (a.kind === 'note') rest = field('Note', `<textarea data-k="note" rows="2">${esc(a.note)}</textarea>`);
+    return `<div class="rv-action" data-i="${i}"><label class="rv-head"><input type="checkbox" data-rv-on checked> ${RV_KIND[a.kind] || 'Change'}</label>
+      <div class="rv-fields stack" style="gap:8px">${people}${rest}</div></div>`;
+  }).join('');
+  $('#rvDlg').showModal();
+}
+$('#rvActions').addEventListener('change', e => {
+  if (e.target.matches('[data-rv-on]')) e.target.closest('.rv-action').classList.toggle('off', !e.target.checked);
+});
+$('#rvForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const actions = [];
+  $('#rvActions').querySelectorAll('.rv-action').forEach(box => {
+    if (!box.querySelector('[data-rv-on]').checked) return;
+    const a = structuredClone(reviewing.suggestion.actions[box.dataset.i]);
+    a.people = [...box.querySelectorAll('[data-rv-person]')].map(s => s.value.startsWith('new:') ? { id: '', name: s.value.slice(4) } : { id: s.value, name: getPerson(s.value)?.name || '' });
+    box.querySelectorAll('[data-k]').forEach(el => a[el.dataset.k] = el.value.trim());
+    actions.push(a);
+  });
+  $('#rvDlg').close();
+  approveRow(reviewing, actions);
+});
+$('#rvDiscard').addEventListener('click', () => {
+  if (!confirm('Discard this note? Nothing from it will be added.')) return;
+  $('#rvDlg').close();
+  removeInboxRow(reviewing.id);
+});
+document.addEventListener('input', e => {
+  if (e.target.id === 'quickNote') { ui.quickDraft = e.target.value; lsSet('circle-quick-draft', ui.quickDraft || null); }
+});
+document.addEventListener('click', async e => {
+  const t = e.target.closest('[data-inbox-approve],[data-inbox-review],[data-inbox-discard],[data-inbox-retry],[data-queue-discard]');
+  if (!t) return;
+  const d = t.dataset;
+  const row = inbox.find(r => r.id === (d.inboxApprove || d.inboxReview || d.inboxDiscard || d.inboxRetry));
+  if (d.queueDiscard) {
+    if (confirm('Discard this note?')) { saveQueue(loadQueue().filter(q => q.localId !== d.queueDiscard)); render(); }
+  } else if (!row) return;
+  else if (d.inboxApprove) approveRow(row, row.suggestion.actions);
+  else if (d.inboxReview) openReview(row);
+  else if (d.inboxDiscard) { if (confirm('Discard this note? Nothing from it will be added.')) removeInboxRow(row.id); }
+  else if (d.inboxRetry) {
+    row.status = 'processing'; row.created_at = new Date().toISOString(); render();
+    try { const fresh = await invokeCapture({ inboxId: row.id }); inbox = inbox.map(r => r.id === row.id ? fresh : r); }
+    catch (err) { row.status = 'error'; row.error = "couldn't reach Circle's server"; console.warn(err); }
+    render();
+  }
+});
+
 // ---------- Import / export / sample ----------
 function exportData() {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -1925,6 +2299,7 @@ function addSample() {
   data.people.push(...sample.people);
   data.interactions.push(...sample.interactions);
   data.relations.push(...sample.relations);
+  data.followUps.push(...sample.followUps);
   save(); render();
 }
 
@@ -1973,10 +2348,20 @@ const actions = {
     data.interactions.forEach(i => i.personIds = i.personIds.filter(id => id !== p.id));
     data.interactions = data.interactions.filter(i => i.personIds.length);
     data.relations = data.relations.filter(r => r.from !== p.id && r.to !== p.id);
+    data.followUps.forEach(f => f.personIds = f.personIds.filter(id => id !== p.id));
+    data.followUps = data.followUps.filter(f => f.personIds.length);
     ui.selected = null; save(); render();
   },
   addEvent: () => openEvDlg(ui.selected),
   addFamily: () => openFamDlg(),
+  addFollowUp: () => openFuDlg(ui.selected || null),
+  sendQuickNote: () => {
+    const text = ui.quickDraft.trim();
+    if (!text) return $('#quickNote')?.focus();
+    ui.quickDraft = ''; lsSet('circle-quick-draft', null);
+    queueNote(text, 'quick-note');
+    toast('Added to your Inbox. It will be sorted in a moment.');
+  },
   importContacts: () => openImport(),
   eventAny: () => openEvDlg(null),
   logAny: () => openIxDlg(null),
@@ -1989,7 +2374,7 @@ const actions = {
   sample: addSample,
 };
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-act],[data-open],[data-log],[data-tl],[data-edit-ix],[data-del-ix],[data-edit-ev],[data-del-ev],[data-pin-ev],[data-hide-ev],[data-fam-edit],[data-fam-del],[data-fam-promote]');
+  const t = e.target.closest('[data-act],[data-open],[data-log],[data-tl],[data-edit-ix],[data-del-ix],[data-edit-ev],[data-del-ev],[data-pin-ev],[data-hide-ev],[data-fam-edit],[data-fam-del],[data-fam-promote],[data-edit-fu]');
   if (!t) return;
   const d = t.dataset;
   const p = getPerson(ui.selected);
@@ -1999,6 +2384,7 @@ document.addEventListener('click', e => {
   else if (d.tl) { ui.tl = d.tl; render(); }
   else if (d.editIx) openIxDlg(p.id, data.interactions.find(i => i.id === d.editIx));
   else if (d.editEv) openEvDlg(p.id, p.events.find(x => x.id === d.editEv));
+  else if (d.editFu) openFuDlg(null, data.followUps.find(f => f.id === d.editFu));
   else if (d.famEdit) { const [kind, id] = d.famEdit.split('|'); openFamDlg({ kind, id }); }
   else if (d.famPromote) promoteMember(p, d.famPromote);
   else if (d.famDel) {
@@ -2022,15 +2408,19 @@ document.addEventListener('click', e => {
     const msg = ix.personIds.length > 1
       ? `This conversation includes ${ix.personIds.length} people. Delete it for everyone?\n\nTo take only ${p.name} off it, use Edit instead.`
       : 'Delete this conversation?';
-    if (confirm(msg)) { data.interactions = data.interactions.filter(i => i !== ix); save(); render(); }
+    if (confirm(msg)) {
+      data.interactions = data.interactions.filter(i => i !== ix);
+      data.followUps = data.followUps.filter(f => f.ixId !== ix.id);
+      save(); render();
+    }
   }
   else if (d.delEv && confirm('Delete this life event?')) { p.events = p.events.filter(x => x.id !== d.delEv); save(); render(); }
 });
 document.addEventListener('change', e => {
   const d = e.target.dataset?.done;
   if (!d) return;
-  const ix = data.interactions.find(i => i.id === d);
-  if (ix) { ix.followUpDone = e.target.checked; save(); render(); }
+  const fu = data.followUps.find(f => f.id === d);
+  if (fu) { fu.done = e.target.checked; save(); render(); }
 });
 
 // ---------- Start ----------
