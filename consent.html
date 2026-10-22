@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Circle · Connect an app</title>
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<script src="config.js"></script>
+<style>
+:root { --bg: #f6f4ef; --panel: #fff; --ink: #23211d; --ink-2: #5d5850; --ink-3: #8f897e; --line: #e6e1d7; --accent: #2f6f5e; --accent-ink: #fff; --warn: #b5562b; color-scheme: light; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #171614; --panel: #201f1c; --ink: #ece8e0; --ink-2: #b6afa3; --ink-3: #847d71; --line: #34312c; --accent: #6fbfa6; --accent-ink: #10211b; --warn: #e48d62; color-scheme: dark; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  display: grid; place-items: center; padding: calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom)); }
+.card { width: min(420px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 24px; display: grid; gap: 14px; }
+.brand { font-weight: 700; font-size: 18px; display: flex; align-items: center; gap: 8px; }
+.brand-dot { width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--accent); }
+h1 { font-size: 20px; margin: 0; }
+p { margin: 0; }
+.muted { color: var(--ink-3); font-size: 14px; }
+ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; color: var(--ink-2); font-size: 14px; }
+label { display: grid; gap: 4px; font-size: 13px; color: var(--ink-2); }
+input { font: inherit; font-size: 16px; color: inherit; width: 100%; border: 1px solid var(--line); background: transparent; border-radius: 8px; padding: 8px 10px; }
+.btns { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: inherit; border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button:disabled { opacity: .6; cursor: default; }
+.error { color: var(--warn); font-size: 14px; min-height: 1.2em; }
+.grant { display: flex; gap: 10px; align-items: center; border-top: 1px solid var(--line); padding-top: 10px; }
+.grant div { flex: 1; min-width: 0; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<!--
+  Two jobs:
+  - With ?authorization_id=…: Supabase sends people here when an app (Claude) asks
+    to connect to their Circle. They sign in if needed, see who's asking, and allow or deny.
+  - Without it: "Connected apps", where they can see and revoke apps they've allowed.
+-->
+<main class="card" aria-live="polite">
+  <div class="brand"><span class="brand-dot"></span>Circle</div>
+
+  <form id="signin" class="card" style="padding:0;border:0" hidden>
+    <h1>Sign in to continue</h1>
+    <label>Email<input type="email" name="email" autocomplete="username" required></label>
+    <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
+    <div class="btns"><button class="primary" type="submit">Sign in</button></div>
+  </form>
+
+  <section id="ask" hidden>
+    <div style="display:grid;gap:12px">
+      <h1><span id="client">An app</span> wants to connect to your Circle</h1>
+      <p class="muted">Signed in as <span id="who"></span>. After you allow it, you'll go back to <strong id="host"></strong>.</p>
+      <p>It will be able to:</p>
+      <ul>
+        <li>Look up the people in your Circle and what you've noted about them</li>
+        <li>See your follow-ups, life events and upcoming birthdays</li>
+        <li>Add notes to your Inbox, which you review before anything is saved</li>
+      </ul>
+      <p class="muted">It can't change or delete anything in Circle. You can disconnect it anytime under ⋯ → Connected apps.</p>
+      <div class="btns"><button id="deny" type="button">Deny</button><button id="allow" class="primary" type="button">Allow</button></div>
+    </div>
+  </section>
+
+  <section id="apps" hidden>
+    <div style="display:grid;gap:10px">
+      <h1>Connected apps</h1>
+      <p class="muted">Apps you've allowed to use your Circle, such as Claude. Disconnecting one stops it straight away.</p>
+      <div id="grants"></div>
+      <div class="btns"><a href="./"><button type="button">Back to Circle</button></a></div>
+    </div>
+  </section>
+
+  <p class="error" id="error" role="alert"></p>
+</main>
+
+<script type="module">
+// Pinned: the first supabase-js line with the OAuth consent methods that's well established.
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/+esm';
+
+const cfg = window.CIRCLE_CONFIG || {};
+const $ = s => document.querySelector(s);
+const show = id => ['#signin', '#ask', '#apps'].forEach(s => $(s).hidden = s !== id);
+const fail = msg => { $('#error').textContent = msg; };
+const supabase = createClient(cfg.supabaseUrl, cfg.supabaseKey, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false } });
+const authorizationId = new URLSearchParams(location.search).get('authorization_id');
+
+async function signedIn() {
+  const { data: { session } } = await supabase.auth.getSession();
+  return session;
+}
+
+async function showRequest() {
+  const { data, error } = await supabase.auth.oauth.getAuthorizationDetails(authorizationId);
+  if (error) return fail(`This request couldn't be loaded (${error.message}). Go back to the app and try connecting again.`);
+  // Already allowed before: Supabase hands back where to go straight away.
+  if (!data.authorization_id && data.redirect_url) { location.assign(data.redirect_url); return; }
+  const session = await signedIn();
+  $('#client').textContent = data.client?.name || data.client?.client_name || 'An app';
+  $('#who').textContent = session?.user?.email || '';
+  try { $('#host').textContent = new URL(data.redirect_uri).host; } catch { $('#host').textContent = data.redirect_uri || 'the app'; }
+  show('#ask');
+}
+
+async function showApps() {
+  show('#apps');
+  const { data, error } = await supabase.auth.oauth.listGrants();
+  if (error) return fail(`Couldn't load connected apps: ${error.message}`);
+  const grants = Array.isArray(data) ? data : data?.grants || [];
+  const box = $('#grants');
+  box.textContent = '';
+  if (!grants.length) { box.innerHTML = '<p class="muted">No apps are connected.</p>'; return; }
+  for (const g of grants) {
+    const row = document.createElement('div');
+    row.className = 'grant';
+    const info = document.createElement('div');
+    const name = g.client?.name || g.client?.client_name || g.client_id || 'App';
+    info.innerHTML = '<strong></strong><div class="muted"></div>';
+    info.querySelector('strong').textContent = name;
+    info.querySelector('.muted').textContent = g.granted_at ? `Connected ${new Date(g.granted_at).toLocaleDateString()}` : '';
+    const btn = document.createElement('button');
+    btn.textContent = 'Disconnect';
+    btn.onclick = async () => {
+      if (!confirm(`Disconnect ${name}? It will lose access to your Circle straight away.`)) return;
+      btn.disabled = true;
+      const { error: err } = await supabase.auth.oauth.revokeGrant({ clientId: g.client?.id || g.client_id });
+      if (err) { btn.disabled = false; return fail(`Couldn't disconnect: ${err.message}`); }
+      showApps();
+    };
+    row.append(info, btn);
+    box.append(row);
+  }
+}
+
+const next = () => authorizationId ? showRequest() : showApps();
+
+$('#signin').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target, btn = f.querySelector('button');
+  btn.disabled = true; fail('');
+  const { error } = await supabase.auth.signInWithPassword({ email: f.email.value.trim(), password: f.password.value });
+  btn.disabled = false;
+  if (error) return fail(/invalid/i.test(error.message) ? "That email and password don't match." : `Couldn't sign in: ${error.message}`);
+  next();
+});
+$('#allow').addEventListener('click', async () => {
+  $('#allow').disabled = $('#deny').disabled = true;
+  // On success this sends the browser back to the app that asked.
+  const { error } = await supabase.auth.oauth.approveAuthorization(authorizationId);
+  if (error) { $('#allow').disabled = $('#deny').disabled = false; fail(`Couldn't allow access: ${error.message}`); }
+});
+$('#deny').addEventListener('click', async () => {
+  $('#allow').disabled = $('#deny').disabled = true;
+  const { data, error } = await supabase.auth.oauth.denyAuthorization(authorizationId);
+  if (error) { $('#allow').disabled = $('#deny').disabled = false; return fail(`Something went wrong: ${error.message}`); }
+  if (data?.redirect_url) location.assign(data.redirect_url);
+});
+
+if (!cfg.supabaseUrl) fail('Circle isn\'t connected to Supabase.');
+else if (await signedIn()) next();
+else show('#signin');
+</script>
+</body>
+</html>
