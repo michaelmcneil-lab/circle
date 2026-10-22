@@ -268,6 +268,8 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
 .rv-action.off { opacity: .5; }
 .rv-action.off .rv-fields { display: none; }
 .rv-head { display: flex; gap: 8px; align-items: center; font-weight: 600; }
+.key-box { display: flex; gap: 8px; align-items: center; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.key-box code { flex: 1; min-width: 0; word-break: break-all; font-size: 13px; }
 .fam-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; opacity: .6; }
 .list li:hover .fam-actions, .fam-actions:focus-within { opacity: 1; }
 
@@ -319,6 +321,7 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
     <div class="menu-list" id="menuList">
       <div class="menu-note signed-in-only" id="acctNote"></div>
       <button class="signed-in-only" data-act="syncNow">Sync now</button>
+      <button class="signed-in-only" data-act="shortcutKeys">iPhone Shortcuts…</button>
       <button class="signed-in-only" data-act="signOut">Sign out</button>
       <hr class="signed-in-only">
       <button data-act="importContacts">Import contacts…</button>
@@ -509,6 +512,24 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
       <button type="button" class="btn" data-close>Cancel</button>
       <button type="submit" class="btn primary">Save</button>
     </div>
+  </form>
+</dialog>
+
+<!-- Shortcut keys dialog -->
+<dialog id="keyDlg">
+  <form id="keyForm">
+    <h3>iPhone Shortcuts</h3>
+    <p class="small" style="margin:0">A Shortcut key lets the Action Button and the Share menu send notes to your Inbox without signing in. A key can only <em>add notes for review</em>: it can't read or change anything in Circle.</p>
+    <div id="keyNew" class="stack" style="gap:10px" hidden>
+      <div class="field"><span><strong>Your new key.</strong> Copy it into your Shortcuts now: it's only shown once.</span>
+        <div class="key-box"><code id="keyValue"></code><button type="button" class="btn small" data-copy="keyValue">Copy</button></div></div>
+      <div class="field"><span>Address for the Shortcuts</span>
+        <div class="key-box"><code id="keyUrl"></code><button type="button" class="btn small" data-copy="keyUrl">Copy</button></div></div>
+    </div>
+    <div class="field"><span>Keys</span><ul class="list" id="keyList"></ul></div>
+    <div><button type="button" class="btn" id="keyCreate">Create a key</button></div>
+    <p class="hint" style="margin:0">If a key is ever shared by mistake, revoke it here and create a new one. Revoking stops it working straight away.</p>
+    <div class="dlg-actions"><button type="button" class="btn primary" data-close>Done</button></div>
   </form>
 </dialog>
 
@@ -2075,6 +2096,7 @@ function quickNoteCard() {
       <button class="btn primary" data-act="sendQuickNote">Add to Inbox</button></div>
   </section>`;
 }
+const SOURCE_LABEL = { 'quick-note': 'Quick note', voice: 'Voice note', share: 'Shared', screenshot: 'Screenshot', claude: 'From Claude' };
 const RV_KIND = { conversation: 'Log conversation', follow_up: 'Follow-up', life_event: 'Life event', note: 'Add to notes' };
 function refName(ref) { const p = ref.id && getPerson(ref.id); return p ? p.name : `${ref.name || 'Someone'} (new)`; }
 function describeAction(a) {
@@ -2092,7 +2114,7 @@ function inboxCard() {
     const when = new Date(r.created_at).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
     const raw = `<div class="inbox-raw">${esc(r.raw)}</div>`;
     if (r.status === 'ready' && r.suggestion?.actions?.length) {
-      return `<div class="inbox-item"><div class="small muted">${esc(r.source === 'quick-note' ? 'Quick note' : r.source || 'Note')} · ${when}</div>
+      return `<div class="inbox-item"><div class="small muted">${esc(SOURCE_LABEL[r.source] || 'Note')} · ${when}</div>
         <ul class="inbox-actions">${r.suggestion.actions.map(a => `<li>${describeAction(a)}</li>`).join('')}</ul>${raw}
         <div class="inbox-btns"><button class="btn primary small" data-inbox-approve="${r.id}">Approve</button>
           <button class="btn small" data-inbox-review="${r.id}">Review</button>
@@ -2236,6 +2258,59 @@ document.addEventListener('click', async e => {
   }
 });
 
+// ---------- Shortcut keys ----------
+// A key is a long random string the iPhone Shortcuts send in an X-Circle-Token
+// header. Only its SHA-256 fingerprint is stored (circle_tokens), so the key
+// itself exists only on this screen, once, and in the user's Shortcuts.
+const CAPTURE_URL = cfg.supabaseUrl ? `${cfg.supabaseUrl}/functions/v1/capture` : '';
+async function sha256hex(s) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+function newKey() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return 'circle_' + btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+async function loadKeys() {
+  const { data: keys, error } = await sync.client.from('circle_tokens').select('id, label, created_at, last_used_at').order('created_at');
+  const list = $('#keyList');
+  if (error) { list.innerHTML = `<li class="small muted">Couldn't load your keys. Is shortcut-keys.sql set up in Supabase?</li>`; return; }
+  const day = s => new Date(s).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  list.innerHTML = keys.length ? keys.map(k => `<li><div class="grow">${esc(k.label)}<div class="small muted">Created ${day(k.created_at)} · ${k.last_used_at ? `last used ${day(k.last_used_at)}` : 'not used yet'}</div></div>
+    <button type="button" class="btn ghost small danger" data-revoke-key="${k.id}">Revoke</button></li>`).join('')
+    : '<li class="small muted">No keys yet.</li>';
+}
+async function openKeys() {
+  if (!sync.user) return toast('Sign in first to set up Shortcuts.');
+  $('#keyNew').hidden = true;
+  $('#keyList').innerHTML = '<li class="small muted">Loading…</li>';
+  $('#keyDlg').showModal();
+  loadKeys();
+}
+$('#keyCreate').addEventListener('click', async () => {
+  const key = newKey();
+  const { error } = await sync.client.from('circle_tokens').insert({ user_id: sync.user.id, token_hash: await sha256hex(key), label: 'iPhone Shortcut' });
+  if (error) { toast(`Couldn't create a key: ${error.message}`); return; }
+  $('#keyValue').textContent = key;
+  $('#keyUrl').textContent = CAPTURE_URL;
+  $('#keyNew').hidden = false;
+  loadKeys();
+});
+$('#keyDlg').addEventListener('click', async e => {
+  const copy = e.target.closest('[data-copy]');
+  if (copy) {
+    try { await navigator.clipboard.writeText($('#' + copy.dataset.copy).textContent); copy.textContent = 'Copied'; setTimeout(() => copy.textContent = 'Copy', 1500); }
+    catch (err) { toast("Couldn't copy. Press and hold the text to copy it instead."); }
+  }
+  const revoke = e.target.closest('[data-revoke-key]');
+  if (revoke && confirm('Revoke this key? Shortcuts using it will stop working.')) {
+    const { error } = await sync.client.from('circle_tokens').delete().eq('id', revoke.dataset.revokeKey);
+    if (error) toast(`Couldn't revoke: ${error.message}`); else { $('#keyNew').hidden = true; loadKeys(); }
+  }
+});
+// Clear the key from the screen when the dialog closes, so it isn't left showing.
+$('#keyDlg').addEventListener('close', () => { $('#keyValue').textContent = ''; $('#keyNew').hidden = true; });
+
 // ---------- Import / export / sample ----------
 function exportData() {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -2355,6 +2430,7 @@ const actions = {
   addEvent: () => openEvDlg(ui.selected),
   addFamily: () => openFamDlg(),
   addFollowUp: () => openFuDlg(ui.selected || null),
+  shortcutKeys: () => openKeys(),
   sendQuickNote: () => {
     const text = ui.quickDraft.trim();
     if (!text) return $('#quickNote')?.focus();
