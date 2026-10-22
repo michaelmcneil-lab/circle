@@ -248,16 +248,17 @@ Deno.serve(async (req) => {
 
   const url = Deno.env.get("SUPABASE_URL")!;
   const shortcutKey = req.headers.get("x-circle-token");
-  let db, userId: string;
+  let db, userId: string, keyTimeZone: string | undefined;
   if (shortcutKey) {
     // A Shortcut key: look up whose it is. The service key is needed because the
     // Shortcut has no session; every query below is limited to that user's rows.
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     if (!serviceKey) return json({ error: "The server isn't set up for Shortcut keys" }, 500);
     db = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
-    const { data: key } = await db.from("circle_tokens").select("id, user_id").eq("token_hash", await sha256hex(shortcutKey.trim())).maybeSingle();
+    const { data: key } = await db.from("circle_tokens").select("id, user_id, time_zone").eq("token_hash", await sha256hex(shortcutKey.trim())).maybeSingle();
     if (!key) return json({ error: "That Shortcut key isn't valid. Create a new one in Circle: ⋯ → iPhone Shortcuts." }, 401);
     userId = key.user_id;
+    keyTimeZone = key.time_zone ?? undefined; // saved by the app when the key was made
     await db.from("circle_tokens").update({ last_used_at: new Date().toISOString() }).eq("id", key.id);
   } else {
     const authHeader = req.headers.get("Authorization") ?? "";
@@ -276,7 +277,7 @@ Deno.serve(async (req) => {
   let body: any, images: Image[];
   try { ({ body, images } = await readBody(req)); }
   catch (err) { return json({ error: `Couldn't read what was sent: ${friendlyError(err)}` }, 400); }
-  const ctx = dateContext(body);
+  const ctx = dateContext({ ...body, timeZone: body.timeZone ?? keyTimeZone });
 
   let row;
   if (body.inboxId) {

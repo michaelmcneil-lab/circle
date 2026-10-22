@@ -112,6 +112,7 @@ create table if not exists public.circle_tokens (
   user_id      uuid not null default auth.uid() references auth.users (id) on delete cascade,
   token_hash   text not null unique,
   label        text not null default 'iPhone Shortcut',
+  time_zone    text,
   created_at   timestamptz not null default now(),
   last_used_at timestamptz
 );

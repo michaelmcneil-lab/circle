@@ -2289,7 +2289,7 @@ async function openKeys() {
 }
 $('#keyCreate').addEventListener('click', async () => {
   const key = newKey();
-  const { error } = await sync.client.from('circle_tokens').insert({ user_id: sync.user.id, token_hash: await sha256hex(key), label: 'iPhone Shortcut' });
+  const { error } = await sync.client.from('circle_tokens').insert({ user_id: sync.user.id, token_hash: await sha256hex(key), label: 'iPhone Shortcut', time_zone: captureContext().timeZone });
   if (error) { toast(`Couldn't create a key: ${error.message}`); return; }
   $('#keyValue').textContent = key;
   $('#keyUrl').textContent = CAPTURE_URL;
