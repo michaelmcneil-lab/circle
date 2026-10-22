@@ -268,6 +268,9 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
 .rv-action.off { opacity: .5; }
 .rv-action.off .rv-fields { display: none; }
 .rv-head { display: flex; gap: 8px; align-items: center; font-weight: 600; }
+.today-card { border-left: 4px solid var(--warm); margin-bottom: 16px; }
+.today-time { font-weight: 700; font-size: 14px; min-width: 62px; padding-top: 1px; }
+#ntForm section { border-top: 1px solid var(--line); padding-top: 12px; }
 .key-box { display: flex; gap: 8px; align-items: center; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
 .key-box code { flex: 1; min-width: 0; word-break: break-all; font-size: 13px; }
 .fam-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; opacity: .6; }
@@ -321,6 +324,7 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
     <div class="menu-list" id="menuList">
       <div class="menu-note signed-in-only" id="acctNote"></div>
       <button class="signed-in-only" data-act="syncNow">Sync now</button>
+      <button class="signed-in-only" data-act="notifications">Notifications &amp; calendar…</button>
       <button class="signed-in-only" data-act="shortcutKeys">iPhone Shortcuts…</button>
       <button class="signed-in-only" data-act="connectedApps">Connected apps…</button>
       <button class="signed-in-only" data-act="signOut">Sign out</button>
@@ -510,6 +514,55 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
     <div class="dlg-actions">
       <button type="button" class="btn ghost danger" id="fuDelete">Delete</button>
       <span class="spacer"></span>
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="submit" class="btn primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Notifications and calendar dialog -->
+<dialog id="ntDlg">
+  <form id="ntForm">
+    <h3>Notifications &amp; calendar</h3>
+    <section class="stack" style="gap:8px">
+      <strong>This device</strong>
+      <p class="small muted" style="margin:0" id="ntDeviceStatus"></p>
+      <div class="p-actions"><button type="button" class="btn primary" id="ntEnable">Turn on notifications</button>
+        <button type="button" class="btn" id="ntTest">Send a test</button></div>
+    </section>
+    <section class="stack" style="gap:8px">
+      <strong>Morning brief</strong>
+      <div class="field-row">
+        <label class="field"><span>Time</span><input type="time" name="brief_time" required></label>
+        <label class="check" style="align-self:end;padding-bottom:8px"><input type="checkbox" name="brief_weekends"> Weekends too</label>
+      </div>
+      <span class="hint">Today's meetings with your people, follow-ups due, and birthdays and anniversaries.</span>
+    </section>
+    <section class="stack" style="gap:8px">
+      <strong>After-meeting prompts</strong>
+      <label class="field"><span>Ask "How did it go?" after meetings with someone in Circle of up to</span>
+        <select name="prompt_max_people">
+          <option value="0">Off</option><option value="2">2 people</option><option value="3">3 people</option>
+          <option value="4">4 people</option><option value="6">6 people</option><option value="10">10 people</option>
+        </select></label>
+      <div class="field-row">
+        <label class="field"><span>Quiet from</span><input type="time" name="quiet_start" required></label>
+        <label class="field"><span>Until</span><input type="time" name="quiet_end" required></label>
+      </div>
+      <span class="hint">No prompts during quiet hours. The morning brief still arrives at its time.</span>
+    </section>
+    <section class="stack" style="gap:8px">
+      <strong>Calendar</strong>
+      <p class="small muted" style="margin:0" id="ntCalStatus"></p>
+      <div id="ntCalNew" class="stack" style="gap:8px">
+        <label class="field"><span>Google Calendar's secret address</span>
+          <input type="url" id="ntCalUrl" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" autocomplete="off" spellcheck="false"></label>
+        <span class="hint">On a computer, open Google Calendar → Settings (⚙) → your calendar under <em>Settings for my calendars</em> → <em>Integrate calendar</em> → copy <em>Secret address in iCal format</em>. It's only stored where Circle's server can read it.</span>
+        <div><button type="button" class="btn" id="ntCalSave">Connect calendar</button></div>
+      </div>
+      <div><button type="button" class="btn ghost small danger" id="ntCalRemove" hidden>Disconnect calendar</button></div>
+    </section>
+    <div class="dlg-actions">
       <button type="button" class="btn" data-close>Cancel</button>
       <button type="submit" class="btn primary">Save</button>
     </div>
@@ -887,6 +940,7 @@ async function syncNow() {
     if (sync.dirty) sync.again = true;
     setStatus(sync.dirty ? 'syncing' : 'synced');
     loadInbox();
+    loadAgenda();
     flushQueue();
   } catch (e) {
     console.warn('Sync failed', e);
@@ -958,7 +1012,7 @@ function finishSignOut() {
   // Clear this device's copy so the next person to pick it up can't read it.
   sync.user = null;
   [LS_KEY, SK.base, SK.rev, SK.dirty, SK.user, CAPTURE_QUEUE, 'circle-quick-draft'].forEach(k => lsSet(k, null));
-  inbox = []; ui.quickDraft = '';
+  inbox = []; agenda = []; ui.quickDraft = '';
   data = normalize({ people: [] });
   ui.selected = null;
   document.body.classList.remove('signed-in');
@@ -1260,6 +1314,7 @@ function renderHome() {
         <button class="btn primary" data-act="logAny">Log a conversation</button>
       </div>
     </div>
+    ${todayCard()}
     ${quickNoteCard()}
     ${inboxCard()}
     ${hard.length ? `<section class="card hard-card" style="margin-bottom:16px"><h2>Going through something</h2>
@@ -1290,6 +1345,8 @@ function renderHome() {
     </div>
   </div>`;
   if (qn) { const t = $('#quickNote'); t.focus(); t.setSelectionRange(qn[0], qn[1]); }
+  // Opened from a "How did it go?" notification or an "Add a note" button: start typing straight away.
+  if (ui.focusNote && $('#quickNote')) { ui.focusNote = false; const t = $('#quickNote'); t.focus(); t.setSelectionRange(t.value.length, t.value.length); t.scrollIntoView({ block: 'center' }); }
 }
 
 function renderPerson(p) {
@@ -2289,6 +2346,168 @@ document.addEventListener('click', async e => {
   }
 });
 
+// ---------- Today, notifications and calendar ----------
+// Circle's server reads the user's calendar (circle_agenda holds today's meetings
+// with people in Circle) and sends notifications to devices that turned them on.
+let agenda = []; // today's meetings: { event_key, start_at, end_at, title, person_ids, attendee_count }
+async function loadAgenda() {
+  if (!sync.user) return;
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  const end = new Date(start); end.setDate(end.getDate() + 1);
+  const { data: rows, error } = await sync.client.from('circle_agenda').select('event_key, start_at, end_at, title, person_ids, attendee_count')
+    .gte('start_at', start.toISOString()).lt('start_at', end.toISOString()).order('start_at');
+  if (error) return; // not set up yet
+  const before = canon(agenda);
+  agenda = rows || [];
+  if (canon(agenda) !== before) render();
+}
+function todayCard() {
+  const meetings = agenda.map(m => ({ ...m, people: m.person_ids.map(getPerson).filter(Boolean) })).filter(m => m.people.length);
+  if (!meetings.length) return '';
+  const now = Date.now();
+  const rows = meetings.map(m => {
+    const time = new Date(m.start_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const ended = new Date(m.end_at).getTime() <= now;
+    // For each person: what they're going through, then what's waiting to follow up on.
+    const notes = m.people.map(p => {
+      const hard = hardNow(p)[0];
+      const fus = followUpsFor(p).filter(f => !f.done);
+      return [hard ? `<div class="small">${EV_TYPES[hard.type][0]} ${esc(p.firstName || p.name)}: ${esc(hard.title)}${hard.howToShowUp ? ` · <em>${esc(hard.howToShowUp)}</em>` : ''}</div>` : '',
+        fus.length ? `<div class="small muted">Follow up with ${esc(p.firstName || p.name)}: ${esc(fus.sort(byDue)[0].text)}${fus.length > 1 ? ` (+${fus.length - 1} more)` : ''}</div>` : ''].join('');
+    }).join('');
+    return `<li><div class="today-time ${ended ? 'muted' : ''}">${time}</div>
+      <div class="grow"><strong>${esc(m.title || 'Meeting')}</strong> <span class="small muted">with</span> ${peopleLinks(m.person_ids)}${notes}</div>
+      ${ended ? `<button class="btn small" data-note-for="${m.people.map(p => p.id).join(',')}">Add a note</button>` : ''}</li>`;
+  }).join('');
+  return `<section class="card today-card" id="todayCard"><h2>Today</h2><ul class="list">${rows}</ul></section>`;
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-note-for]');
+  if (!b) return;
+  const names = b.dataset.noteFor.split(',').map(id => getPerson(id)?.firstName || getPerson(id)?.name).filter(Boolean).join(' & ');
+  ui.quickDraft = `Met with ${names}: `;
+  ui.focusNote = true;
+  render();
+});
+
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const b64uBytes = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - s.length % 4) % 4)), c => c.charCodeAt(0));
+async function fnError(err) { try { return (await err.context.json()).error || err.message; } catch (e) { return err.message; } }
+async function currentSubscription() {
+  if (!pushSupported()) return null;
+  const reg = await navigator.serviceWorker.getRegistration();
+  return reg ? reg.pushManager.getSubscription() : null;
+}
+async function showDeviceStatus() {
+  const status = $('#ntDeviceStatus'), btn = $('#ntEnable');
+  btn.hidden = false;
+  if (!pushSupported()) {
+    const iphone = /iPhone|iPad/.test(navigator.userAgent);
+    status.textContent = iphone ? "To get notifications on iPhone, open Circle from its Home Screen icon (in Safari: Share → Add to Home Screen), then turn them on here."
+      : "This browser can't receive notifications.";
+    btn.hidden = true;
+    return;
+  }
+  if (Notification.permission === 'denied') {
+    status.textContent = 'Notifications are blocked for Circle. Allow them in your device settings (on iPhone: Settings → Notifications → Circle), then come back here.';
+    btn.hidden = true;
+    return;
+  }
+  const sub = await currentSubscription();
+  status.textContent = sub ? 'Notifications are on for this device.' : 'Notifications are off for this device.';
+  btn.textContent = sub ? 'Turn off on this device' : 'Turn on notifications';
+  btn.classList.toggle('primary', !sub);
+}
+function showCalendarStatus(row) {
+  const s = $('#ntCalStatus');
+  const connected = !!row?.calendar_checked_at;
+  $('#ntCalRemove').hidden = !connected;
+  if (!connected) s.textContent = 'Not connected. Connect it to get meeting prep in the morning brief and "How did it go?" prompts.';
+  else if (row.calendar_error) s.textContent = `⚠ Couldn't read your calendar: ${row.calendar_error}`;
+  else s.textContent = `Connected · checked ${new Date(row.calendar_checked_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. Paste a new address below only if you reset it in Google.`;
+}
+async function openNotifications() {
+  if (!sync.user) return toast('Sign in first.');
+  const { data: row } = await sync.client.from('circle_settings').select('*').eq('user_id', sync.user.id).maybeSingle();
+  const f = $('#ntForm');
+  f.brief_time.value = row?.brief_time || '07:30';
+  f.brief_weekends.checked = !!row?.brief_weekends;
+  f.quiet_start.value = row?.quiet_start || '21:00';
+  f.quiet_end.value = row?.quiet_end || '07:00';
+  f.prompt_max_people.value = String(row?.prompt_max_people ?? 4);
+  $('#ntCalUrl').value = '';
+  showCalendarStatus(row);
+  $('#ntDlg').showModal();
+  showDeviceStatus();
+}
+// Saves the settings shown in the dialog (also creates them, so the server starts checking).
+async function saveNotificationSettings() {
+  const f = $('#ntForm');
+  const { error } = await sync.client.from('circle_settings').upsert({
+    user_id: sync.user.id, time_zone: captureContext().timeZone, brief_time: f.brief_time.value, brief_weekends: f.brief_weekends.checked,
+    quiet_start: f.quiet_start.value, quiet_end: f.quiet_end.value, prompt_max_people: Number(f.prompt_max_people.value), updated_at: new Date().toISOString(),
+  }, { onConflict: 'user_id' });
+  if (error) throw error;
+}
+$('#ntEnable').addEventListener('click', async () => {
+  const btn = $('#ntEnable');
+  btn.disabled = true;
+  try {
+    const existing = await currentSubscription();
+    if (existing) {
+      await sync.client.from('circle_push_subscriptions').delete().eq('endpoint', existing.endpoint);
+      await existing.unsubscribe();
+    } else {
+      if (await Notification.requestPermission() !== 'granted') return showDeviceStatus();
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uBytes(cfg.vapidPublicKey) });
+      const j = sub.toJSON();
+      await sync.client.from('circle_push_subscriptions').delete().eq('endpoint', j.endpoint);
+      const { error } = await sync.client.from('circle_push_subscriptions').insert({
+        user_id: sync.user.id, endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, user_agent: navigator.userAgent.slice(0, 200),
+      });
+      if (error) throw error;
+      await saveNotificationSettings();
+      toast('Notifications are on. Tap "Send a test" to try one.');
+    }
+  } catch (err) {
+    console.warn(err);
+    toast(`Couldn't change notifications: ${err.message}`);
+  } finally { btn.disabled = false; showDeviceStatus(); }
+});
+$('#ntTest').addEventListener('click', async () => {
+  const { data, error } = await sync.client.functions.invoke('notify', { body: { action: 'test' } });
+  if (error) return toast(`Couldn't send: ${await fnError(error)}`);
+  toast(data.sent ? 'Sent. It should arrive in a few seconds.' : 'No device has notifications on yet. Turn them on first.');
+});
+$('#ntCalSave').addEventListener('click', async () => {
+  const url = $('#ntCalUrl').value.trim();
+  if (!url) return $('#ntCalUrl').focus();
+  const btn = $('#ntCalSave');
+  btn.disabled = true; btn.textContent = 'Checking…';
+  try {
+    await saveNotificationSettings();
+    const { data, error } = await sync.client.functions.invoke('notify', { body: { action: 'save_calendar', url } });
+    if (error) { $('#ntCalStatus').textContent = `⚠ ${await fnError(error)}`; return; }
+    $('#ntCalUrl').value = '';
+    $('#ntCalStatus').textContent = `Connected. ${data.meetings} meeting${data.meetings === 1 ? '' : 's'} with your people in the next two days.`;
+    $('#ntCalRemove').hidden = false;
+    loadAgenda();
+  } finally { btn.disabled = false; btn.textContent = 'Connect calendar'; }
+});
+$('#ntCalRemove').addEventListener('click', async () => {
+  if (!confirm('Disconnect your calendar? Circle will stop reading it and forget its address.')) return;
+  const { error } = await sync.client.functions.invoke('notify', { body: { action: 'remove_calendar' } });
+  if (error) return toast(`Couldn't disconnect: ${await fnError(error)}`);
+  agenda = []; render();
+  showCalendarStatus(null);
+});
+$('#ntForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  try { await saveNotificationSettings(); $('#ntDlg').close(); toast('Saved.'); }
+  catch (err) { toast(`Couldn't save: ${err.message}`); }
+});
+
 // ---------- Shortcut keys ----------
 // A key is a long random string the iPhone Shortcuts send in an X-Circle-Token
 // header. Only its SHA-256 fingerprint is stored (circle_tokens), so the key
@@ -2462,6 +2681,7 @@ const actions = {
   addFamily: () => openFamDlg(),
   addFollowUp: () => openFuDlg(ui.selected || null),
   shortcutKeys: () => openKeys(),
+  notifications: () => openNotifications(),
   connectedApps: () => { location.href = 'consent.html'; },
   sendQuickNote: () => {
     const text = ui.quickDraft.trim();
@@ -2532,6 +2752,13 @@ document.addEventListener('change', e => {
 });
 
 // ---------- Start ----------
+// Links from notifications: ?view=today opens Home, ?note=… starts a quick note.
+{
+  const params = new URLSearchParams(location.search);
+  if (params.has('note')) { ui.quickDraft = params.get('note'); ui.focusNote = true; }
+  if (params.has('note') || params.get('view') === 'today') ui.tab = 'home';
+  if (params.toString()) history.replaceState(null, '', location.pathname);
+}
 loadLocal();
 setStatus();
 render();
