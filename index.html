@@ -560,7 +560,9 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
         <span class="hint">On a computer, open Google Calendar → Settings (⚙) → your calendar under <em>Settings for my calendars</em> → <em>Integrate calendar</em> → copy <em>Secret address in iCal format</em>. It's only stored where Circle's server can read it.</span>
         <div><button type="button" class="btn" id="ntCalSave">Connect calendar</button></div>
       </div>
-      <div><button type="button" class="btn ghost small danger" id="ntCalRemove" hidden>Disconnect calendar</button></div>
+      <div id="ntCalCheckResult" class="small" hidden></div>
+      <div class="p-actions"><button type="button" class="btn small" id="ntCalCheck" hidden>Check calendar now</button>
+        <button type="button" class="btn ghost small danger" id="ntCalRemove" hidden>Disconnect calendar</button></div>
     </section>
     <div class="dlg-actions">
       <button type="button" class="btn" data-close>Cancel</button>
@@ -2422,6 +2424,8 @@ function showCalendarStatus(row) {
   const s = $('#ntCalStatus');
   const connected = !!row?.calendar_checked_at;
   $('#ntCalRemove').hidden = !connected;
+  $('#ntCalCheck').hidden = !connected;
+  $('#ntCalCheckResult').hidden = true;
   if (!connected) s.textContent = 'Not connected. Connect it to get meeting prep in the morning brief and "How did it go?" prompts.';
   else if (row.calendar_error) s.textContent = `⚠ Couldn't read your calendar: ${row.calendar_error}`;
   else s.textContent = `Connected · checked ${new Date(row.calendar_checked_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. Paste a new address below only if you reset it in Google.`;
@@ -2494,6 +2498,22 @@ $('#ntCalSave').addEventListener('click', async () => {
     $('#ntCalRemove').hidden = false;
     loadAgenda();
   } finally { btn.disabled = false; btn.textContent = 'Connect calendar'; }
+});
+// Shows what Circle can see in the calendar, so a missing meeting can be explained.
+$('#ntCalCheck').addEventListener('click', async () => {
+  const btn = $('#ntCalCheck'), out = $('#ntCalCheckResult');
+  btn.disabled = true; btn.textContent = 'Checking…';
+  try {
+    const { data, error } = await sync.client.functions.invoke('notify', { body: { action: 'check_calendar' } });
+    out.hidden = false;
+    if (error) { out.textContent = `⚠ ${await fnError(error)}`; return; }
+    const li = items => items.map(x => `<li>${esc(x)}</li>`).join('');
+    out.innerHTML = `<p style="margin:0 0 4px"><strong>Today to two days ahead</strong>, as Circle sees your calendar:</p>`
+      + (data.matched.length ? `<p style="margin:6px 0 2px">With people in Circle:</p><ul style="margin:0;padding-left:18px">${li(data.matched.map(m => `${m.when}: ${m.title} (${m.people.join(', ')})`))}</ul>` : '<p class="muted" style="margin:4px 0">No meetings with people in Circle.</p>')
+      + (data.others.length ? `<p style="margin:6px 0 2px">Other events (no one in Circle recognized):</p><ul style="margin:0;padding-left:18px">${li(data.others.map(m => `${m.when}: ${m.title}`))}</ul>` : '')
+      + (!data.matched.length && !data.others.length ? '<p class="muted" style="margin:4px 0">Google isn't showing any timed events yet. New events can take a few hours to appear in the secret address.</p>' : '');
+    loadAgenda();
+  } finally { btn.disabled = false; btn.textContent = 'Check calendar now'; }
 });
 $('#ntCalRemove').addEventListener('click', async () => {
   if (!confirm('Disconnect your calendar? Circle will stop reading it and forget its address.')) return;

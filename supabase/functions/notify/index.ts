@@ -79,7 +79,8 @@ async function push(userId: string, payload: Payload) {
 type Meeting = { key: string; start: Date; end: Date; title: string; personIds: string[]; attendees: number };
 
 // Turns a calendar feed into meetings between `from` and `to` that include someone in Circle.
-function meetingsFrom(ics: string, doc: Doc, selfEmail: string, from: Date, to: Date): Meeting[] {
+// `seen`, if given, collects every timed event in the window, matched or not (for "Check calendar now").
+function meetingsFrom(ics: string, doc: Doc, selfEmail: string, from: Date, to: Date, seen?: { title: string; start: Date }[]): Meeting[] {
   const root = new ICAL.Component(ICAL.parse(ics));
   for (const tz of root.getAllSubcomponents("vtimezone")) ICAL.TimezoneService.register(tz);
   const events = root.getAllSubcomponents("vevent").map((v) => new ICAL.Event(v));
@@ -107,6 +108,7 @@ function meetingsFrom(ics: string, doc: Doc, selfEmail: string, from: Date, to: 
       status: String(a.getParameter("partstat") ?? "").toUpperCase(),
     }));
     if (attendees.some((a) => a.email === self && a.status === "DECLINED")) return;
+    seen?.push({ title: e.summary || "(no title)", start: start.toJSDate() });
     const ids = new Set<string>();
     for (const a of attendees) if (a.email !== self && byEmail.has(a.email)) ids.add(byEmail.get(a.email)!);
     const text = [e.summary ?? "", ...attendees.map((a) => a.name)].join(" | ");
@@ -160,7 +162,7 @@ async function userEmail(userId: string) {
 }
 
 // Re-reads the calendar and records meetings from yesterday to two days ahead.
-async function refreshAgenda(userId: string, doc: Doc, url?: string) {
+async function refreshAgenda(userId: string, doc: Doc, url?: string, seen?: { title: string; start: Date }[]) {
   if (!url) {
     const { data } = await admin.from("circle_calendar_links").select("url").eq("user_id", userId).maybeSingle();
     url = data?.url;
@@ -168,7 +170,7 @@ async function refreshAgenda(userId: string, doc: Doc, url?: string) {
   if (!url) return null;
   try {
     const now = Date.now();
-    const meetings = meetingsFrom(await fetchCalendar(url), doc, await userEmail(userId), new Date(now - 864e5), new Date(now + 2 * 864e5));
+    const meetings = meetingsFrom(await fetchCalendar(url), doc, await userEmail(userId), new Date(now - 864e5), new Date(now + 2 * 864e5), seen);
     const { data: existing } = await admin.from("circle_agenda").select("event_key, prompted").eq("user_id", userId);
     const prompted = new Map((existing ?? []).map((r) => [r.event_key, r.prompted]));
     if (meetings.length) {
@@ -322,6 +324,28 @@ Deno.serve(async (req) => {
     await admin.from("circle_agenda").delete().eq("user_id", user.id);
     await admin.from("circle_settings").update({ calendar_checked_at: null, calendar_error: null }).eq("user_id", user.id);
     return json({ ok: true });
+  }
+  if (body.action === "check_calendar") {
+    // What Circle can see in the calendar right now, matched or not.
+    const s = await settingsFor(user.id);
+    const tz = s.time_zone || "America/Los_Angeles";
+    const seen: { title: string; start: Date }[] = [];
+    try {
+      const doc = await loadDoc(user.id);
+      const meetings = await refreshAgenda(user.id, doc, undefined, seen);
+      if (!meetings) return json({ error: "No calendar is connected." }, 400);
+      const when = (d: Date) => `${local(tz, d).date} ${clock(tz, d)}`;
+      const matchedKeys = new Set(meetings.map((m) => `${m.title}|${m.start.toISOString()}`));
+      return json({
+        ok: true, checkedAt: new Date().toISOString(),
+        matched: meetings.sort((a, b) => +a.start - +b.start).map((m) => ({ when: when(m.start), title: m.title,
+          people: m.personIds.map((id) => doc.people.find((p) => p.id === id)?.name).filter(Boolean) })),
+        others: seen.filter((e) => !matchedKeys.has(`${e.title}|${e.start.toISOString()}`)).sort((a, b) => +a.start - +b.start)
+          .slice(0, 15).map((e) => ({ when: when(e.start), title: e.title })),
+      });
+    } catch (err) {
+      return json({ error: `Couldn't read your calendar: ${err instanceof Error ? err.message : err}` }, 400);
+    }
   }
   if (body.action === "refresh") return json({ ok: true, ...(await runUser(await settingsFor(user.id), true)) });
   return json({ error: "Unknown action" }, 400);
