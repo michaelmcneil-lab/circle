@@ -2398,7 +2398,16 @@ document.addEventListener('click', e => {
 
 const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 const b64uBytes = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - s.length % 4) % 4)), c => c.charCodeAt(0));
-async function fnError(err) { try { return (await err.context.json()).error || err.message; } catch (e) { return err.message; } }
+// The reason a server function gave, including Supabase's own messages (such as a
+// function running out of time), which use "message" rather than "error".
+async function fnError(err) {
+  try {
+    const body = await err.context.clone().json();
+    return body.error || body.message || body.msg || `${err.message} (${err.context.status})`;
+  } catch (e) {
+    try { return `${err.message} (${err.context.status}${err.context.statusText ? ` ${err.context.statusText}` : ''})`; } catch (e2) { return err.message; }
+  }
+}
 async function currentSubscription() {
   if (!pushSupported()) return null;
   const reg = await navigator.serviceWorker.getRegistration();

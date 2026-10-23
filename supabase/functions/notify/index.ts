@@ -79,9 +79,55 @@ async function push(userId: string, payload: Payload) {
 type Meeting = { key: string; start: Date; end: Date; title: string; personIds: string[]; attendees: number };
 
 // Turns a calendar feed into meetings between `from` and `to` that include someone in Circle.
+// A calendar feed can hold many years of events (iCloud family calendars often do),
+// and reading all of them in detail takes longer than a server function is allowed.
+// This keeps only what can matter: events that start or end within a day of the
+// window, repeating events that haven't ended, and the time zone definitions.
+const ymd = (d: Date) => d.toISOString().slice(0, 10).replace(/-/g, "");
+function trimFeed(ics: string, from: Date, to: Date): string {
+  const lo = ymd(new Date(+from - 864e5)), hi = ymd(new Date(+to + 864e5));
+  const unfolded = ics.replace(/\r?\n[ \t]/g, "");
+  const first = unfolded.indexOf("BEGIN:VEVENT");
+  if (first < 0) return unfolded;
+  const out = [unfolded.slice(0, first)];
+  const re = /BEGIN:VEVENT[\s\S]*?END:VEVENT/g;
+  for (const m of unfolded.matchAll(re)) {
+    const ev = m[0];
+    const date = (prop: string) => ev.match(new RegExp(`(?:^|\\n)${prop}[^:\\n]*:(\\d{8})`))?.[1];
+    if (/(?:^|\n)RRULE:/.test(ev)) {
+      const until = ev.match(/(?:^|\n)RRULE:[^\n]*UNTIL=(\d{8})/)?.[1];
+      if (!until || until >= lo) out.push(ev); // still repeating
+      continue;
+    }
+    const start = date("RECURRENCE-ID") && !date("DTSTART") ? date("RECURRENCE-ID") : date("DTSTART");
+    const end = date("DTEND") ?? start;
+    const moved = date("RECURRENCE-ID");
+    // A moved occurrence matters if either its new or its original date is near the window.
+    if ((start && start <= hi && (end ?? start) >= lo) || (moved && moved >= lo && moved <= hi)) out.push(ev);
+  }
+  out.push("END:VCALENDAR");
+  return out.join("\r\n");
+}
+
+// For a long-running daily or weekly series, start expanding a little before the
+// window instead of at its first occurrence years ago. Moving the start by whole
+// periods keeps every occurrence where it was. Series limited by COUNT are left as
+// they are, since skipping would change which occurrences they include.
+function nearStart(e: InstanceType<typeof ICAL.Event>, from: InstanceType<typeof ICAL.Time>) {
+  const rule = e.component.getFirstPropertyValue("rrule") as InstanceType<typeof ICAL.Recur> | null;
+  if (!rule || rule.count) return undefined;
+  const period = rule.freq === "DAILY" ? (rule.interval || 1) : rule.freq === "WEEKLY" ? 7 * (rule.interval || 1) : 0;
+  if (!period) return undefined;
+  const behind = Math.floor((from.toUnixTime() - e.startDate.toUnixTime()) / 86400) - 14;
+  if (behind <= period) return undefined;
+  const start = e.startDate.clone();
+  start.adjust(Math.floor(behind / period) * period, 0, 0, 0);
+  return start;
+}
+
 // `seen`, if given, collects every timed event in the window, matched or not (for "Check calendar now").
 function meetingsFrom(ics: string, doc: Doc, selfEmail: string, from: Date, to: Date, seen?: { title: string; start: Date }[]): Meeting[] {
-  const root = new ICAL.Component(ICAL.parse(ics));
+  const root = new ICAL.Component(ICAL.parse(trimFeed(ics, from, to)));
   for (const tz of root.getAllSubcomponents("vtimezone")) ICAL.TimezoneService.register(tz);
   const events = root.getAllSubcomponents("vevent").map((v) => new ICAL.Event(v));
   // Moved or edited single occurrences of a repeating meeting belong to their series.
@@ -135,7 +181,7 @@ function meetingsFrom(ics: string, doc: Doc, selfEmail: string, from: Date, to: 
       if (e.endDate.compare(fromT) >= 0 && e.startDate.compare(toT) <= 0) add(e, e.startDate, e.endDate);
       continue;
     }
-    const it = e.iterator();
+    const it = e.iterator(nearStart(e, fromT));
     for (let n = 0, t = it.next(); t && n < 5000; t = it.next(), n++) {
       if (t.compare(toT) > 0) break;
       const d = e.getOccurrenceDetails(t);
