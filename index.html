@@ -2511,7 +2511,7 @@ $('#ntCalCheck').addEventListener('click', async () => {
     out.innerHTML = `<p style="margin:0 0 4px"><strong>Today to two days ahead</strong>, as Circle sees your calendar:</p>`
       + (data.matched.length ? `<p style="margin:6px 0 2px">With people in Circle:</p><ul style="margin:0;padding-left:18px">${li(data.matched.map(m => `${m.when}: ${m.title} (${m.people.join(', ')})`))}</ul>` : '<p class="muted" style="margin:4px 0">No meetings with people in Circle.</p>')
       + (data.others.length ? `<p style="margin:6px 0 2px">Other events (no one in Circle recognized):</p><ul style="margin:0;padding-left:18px">${li(data.others.map(m => `${m.when}: ${m.title}`))}</ul>` : '')
-      + (!data.matched.length && !data.others.length ? '<p class="muted" style="margin:4px 0">Google isn't showing any timed events yet. New events can take a few hours to appear in the secret address.</p>' : '');
+      + (!data.matched.length && !data.others.length ? '<p class="muted" style="margin:4px 0">Google is not showing any timed events yet. New events can take a few hours to appear in the secret address.</p>' : '');
     loadAgenda();
   } finally { btn.disabled = false; btn.textContent = 'Check calendar now'; }
 });
