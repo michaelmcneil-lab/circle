@@ -1502,6 +1502,7 @@ function renderPerson(p) {
       </div>
     </div>
     ${tom}
+    ${personCalendarCard(p)}
     <div class="grid2 person-grid">
       <div class="stack">
         <section class="card"><h2>Details</h2>${facts ? `<dl class="facts">${facts}</dl>` : '<p class="muted small" style="margin:0">No details yet. Click Edit to add some.</p>'}</section>
@@ -2397,6 +2398,32 @@ const eventDate = m => m.all_day && m.start_date ? m.start_date : (() => {
   const d = new Date(m.start_at);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 })();
+// Calendar events that involve this person, from today to a month ahead. Once one is
+// over, "Add a note" starts a Quick note about it; nothing is added to their timeline
+// on its own, since being on a calendar together isn't the same as having talked.
+function personCalendarCard(p) {
+  const events = agenda.filter(m => m.person_ids.includes(p.id) && -daysSince(eventDate(m)) >= 0)
+    .sort((a, b) => a.start_at.localeCompare(b.start_at));
+  if (!events.length) return '';
+  const multiCal = new Set(agenda.map(m => m.calendar_label).filter(Boolean)).size > 1;
+  const rows = events.map(m => {
+    const ended = !m.all_day && new Date(m.end_at).getTime() <= Date.now();
+    const when = m.all_day ? `${fmtDay(eventDate(m))} · All day`
+      : `${fmtDay(eventDate(m))} · ${new Date(m.start_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+    const others = peopleLinks(m.person_ids, p.id);
+    // "Went to Angelo's improv show: …", adding who it was with when the title doesn't say.
+    const title = m.title || 'an event';
+    const people = m.person_ids.map(getPerson).filter(Boolean);
+    const named = people.every(x => title.toLowerCase().includes(String(x.firstName || x.name).toLowerCase()));
+    const note = named ? `Went to ${title}: ` : `Went to ${title} with ${people.map(x => x.firstName || x.name).join(' & ')}: `;
+    return `<li><div class="avatar" style="--h:210" aria-hidden="true">📅</div>
+      <div class="grow"><strong>${esc(m.title || 'Event')}</strong>
+        <div class="small muted">${when}${multiCal && m.calendar_label ? ` · ${esc(m.calendar_label)}` : ''}${others ? ` · with ${others}` : ''}</div></div>
+      ${ended ? `<button class="btn small" data-note-for="${m.person_ids.join(',')}" data-note-text="${esc(note)}">Add a note</button>`
+        : `<span class="pill ${-daysSince(eventDate(m)) <= 7 ? 'accent' : ''}">${inDays(-daysSince(eventDate(m)))}</span>`}</li>`;
+  }).join('');
+  return `<section class="card" style="margin-bottom:16px"><h2>On your calendar</h2><ul class="list">${rows}</ul></section>`;
+}
 function todayCard() {
   const meetings = agenda.filter(m => !m.all_day && eventDate(m) === todayStr())
     .map(m => ({ ...m, people: m.person_ids.map(getPerson).filter(Boolean) })).filter(m => m.people.length);
@@ -2422,8 +2449,11 @@ document.addEventListener('click', e => {
   const b = e.target.closest('[data-note-for]');
   if (!b) return;
   const names = b.dataset.noteFor.split(',').map(id => getPerson(id)?.firstName || getPerson(id)?.name).filter(Boolean).join(' & ');
-  ui.quickDraft = `Met with ${names}: `;
+  ui.quickDraft = b.dataset.noteText || `Met with ${names}: `;
   ui.focusNote = true;
+  // The Quick note box is on Home, so go there from a person's page.
+  ui.selected = null;
+  ui.tab = 'home';
   render();
 });
 
