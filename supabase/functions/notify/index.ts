@@ -145,6 +145,16 @@ function meetingsFrom(ics: string, doc: Doc, selfEmail: string, from: Date, to: 
   const firstNames = new Map<string, number>();
   for (const p of people) { const f = String(p.firstName || "").toLowerCase(); if (f) firstNames.set(f, (firstNames.get(f) ?? 0) + 1); }
   const word = (s: string) => new RegExp(`(^|[^\\p{L}])${s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^\\p{L}])`, "iu");
+  // Each person's names are prepared once, not once per event: with hundreds of people
+  // and a month of events, building them per event used up the function's computing time.
+  // A plain substring check rules most people out before the slower whole-word check.
+  const matchers = people.map((p) => {
+    const names = [p.name, p.nickname].filter((n) => n && String(n).length >= 3).map(String);
+    const first = String(p.firstName || "");
+    // A first name alone only counts when nobody else in Circle shares it.
+    if (first.length >= 3 && firstNames.get(first.toLowerCase()) === 1) names.push(first);
+    return { id: p.id, names: names.map((n) => ({ lower: n.toLowerCase(), re: word(n) })) };
+  });
   const self = selfEmail.toLowerCase();
 
   const out: Meeting[] = [];
@@ -160,13 +170,10 @@ function meetingsFrom(ics: string, doc: Doc, selfEmail: string, from: Date, to: 
     const ids = new Set<string>();
     for (const a of attendees) if (a.email !== self && byEmail.has(a.email)) ids.add(byEmail.get(a.email)!);
     const text = [e.summary ?? "", ...attendees.map((a) => a.name)].join(" | ");
-    for (const p of people) {
-      if (ids.has(p.id)) continue;
-      const names = [p.name, p.nickname].filter((n) => n && String(n).length >= 3);
-      const first = String(p.firstName || "");
-      // A first name alone only counts when nobody else in Circle shares it.
-      if (first.length >= 3 && firstNames.get(first.toLowerCase()) === 1) names.push(first);
-      if (names.some((n) => word(String(n)).test(text))) ids.add(p.id);
+    const lower = text.toLowerCase();
+    for (const m of matchers) {
+      if (ids.has(m.id)) continue;
+      if (m.names.some((n) => lower.includes(n.lower) && n.re.test(text))) ids.add(m.id);
     }
     const noon = (t: InstanceType<typeof ICAL.Time>) => new Date(Date.UTC(t.year, t.month - 1, t.day, 12));
     const allDay = start.isDate;
@@ -230,13 +237,14 @@ async function refreshAgenda(userId: string, doc: Doc) {
   const now = Date.now(), from = new Date(now - 864e5), to = new Date(now + DAYS_AHEAD * 864e5);
   const self = await userEmail(userId);
   const byKey = new Map<string, Meeting & { calendar: string }>();
+  const seen = new Set<string>(); // title + start, to spot the same event in two calendars
   const failed: string[] = [];
   for (const link of links) {
     try {
       for (const m of meetingsFrom(await fetchCalendar(link.url), doc, self, from, to)) {
         // The same event in two calendars (a shared family calendar) counts once.
-        const dupe = [...byKey.values()].some((x) => x.title === m.title && +x.start === +m.start);
-        if (!byKey.has(m.key) && !dupe) byKey.set(m.key, { ...m, calendar: link.label });
+        const twin = `${m.title}|${+m.start}`;
+        if (!byKey.has(m.key) && !seen.has(twin)) { byKey.set(m.key, { ...m, calendar: link.label }); seen.add(twin); }
       }
       await admin.from("circle_calendar_links").update({ last_error: null, checked_at: new Date().toISOString() }).eq("id", link.id);
     } catch (err) {
