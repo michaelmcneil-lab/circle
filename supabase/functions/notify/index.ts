@@ -385,7 +385,10 @@ async function handle(req: Request): Promise<Response> {
       try { results.push({ user: s.user_id.slice(0, 8), ...(await runUser(s)) }); }
       catch (err) { console.error("run failed", s.user_id, err); }
     }
-    return json({ ok: true, results });
+    // The same schedule keeps Google Contacts in sync (a separate function, with its own time limits).
+    const google = await fetch(`${SUPABASE_URL}/functions/v1/google-contacts`, { method: "POST", headers: { "x-cron-secret": CRON_SECRET } })
+      .then((r) => r.status).catch((err) => { console.error("google sync not reached", err); return 0; });
+    return json({ ok: true, results, google });
   }
 
   // The app, signed in.

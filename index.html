@@ -102,6 +102,8 @@ header.top {
 body:not(.signed-in) .signed-in-only { display: none; }
 .auth { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: grid; place-items: center; padding: 16px; }
 .auth[hidden] { display: none; }
+/* Layout classes (.stack, .p-actions) set display, which would otherwise un-hide them. */
+[hidden] { display: none !important; }
 .auth-card { width: min(380px, 100%); display: grid; gap: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 24px; box-shadow: var(--shadow); }
 .auth-error { margin: 0; min-height: 1.2em; color: var(--warn); font-size: 14px; }
 
@@ -326,6 +328,7 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
       <button class="signed-in-only" data-act="syncNow">Sync now</button>
       <button class="signed-in-only" data-act="notifications">Notifications &amp; calendar…</button>
       <button class="signed-in-only" data-act="shortcutKeys">iPhone Shortcuts…</button>
+      <button class="signed-in-only" data-act="googleContacts">Google Contacts sync…</button>
       <button class="signed-in-only" data-act="connectedApps">Connected apps…</button>
       <button class="signed-in-only" data-act="signOut">Sign out</button>
       <hr class="signed-in-only">
@@ -571,6 +574,56 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
     <div class="dlg-actions">
       <button type="button" class="btn" data-close>Cancel</button>
       <button type="submit" class="btn primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Google Contacts sync dialog -->
+<dialog id="gcDlg">
+  <form id="gcForm">
+    <h3>Google Contacts sync</h3>
+    <p class="small" style="margin:0">Keeps names, phones, emails, birthdays, addresses, company and photos the same in Circle and Google, both ways. Conversations, notes and life events stay in Circle. Deletions are never copied: Circle asks you first.</p>
+    <p class="small" id="gcStatus" style="margin:0">Loading…</p>
+    <div class="p-actions" id="gcConnectRow" hidden><button type="button" class="btn primary" id="gcConnect">Connect Google</button></div>
+    <section class="stack" style="gap:8px" id="gcSetup" hidden>
+      <strong>Try it first</strong>
+      <ol class="small" style="margin:0;padding-left:18px">
+        <li><strong>Preview</strong> shows what would change on each side. Nothing changes yet.</li>
+        <li><strong>Sync one person</strong>, then check them in Circle and in Google.</li>
+        <li>If they look right, <strong>turn it on for everyone</strong>. After that it syncs every 5 minutes.</li>
+      </ol>
+      <div class="p-actions"><button type="button" class="btn" id="gcPreview">Preview</button></div>
+      <div class="field-row" style="align-items:end">
+        <label class="field"><span>Person to test with</span><select id="gcPerson"></select></label>
+        <button type="button" class="btn" id="gcSyncOne">Sync this person</button>
+      </div>
+      <div class="p-actions"><button type="button" class="btn primary" id="gcTurnOn">Turn on for everyone</button></div>
+    </section>
+    <section class="stack" style="gap:8px" id="gcOn" hidden>
+      <div class="p-actions"><button type="button" class="btn" id="gcSyncNow">Sync now</button>
+        <button type="button" class="btn" id="gcPreview2">Preview</button>
+        <button type="button" class="btn ghost" id="gcPause">Pause syncing</button></div>
+    </section>
+    <section class="stack" style="gap:8px" id="gcConflictsBox" hidden>
+      <strong>Different in Circle and Google</strong>
+      <span class="hint">These were different before syncing started. Pick which to keep; the other side is updated to match.</span>
+      <ul class="list" id="gcConflicts"></ul>
+    </section>
+    <section class="stack" style="gap:8px" id="gcFlagsBox" hidden>
+      <strong>Deleted on one side</strong>
+      <ul class="list" id="gcFlags"></ul>
+    </section>
+    <section class="stack" style="gap:8px" id="gcResultBox" hidden>
+      <strong id="gcResultTitle"></strong>
+      <ul class="list" id="gcResult"></ul>
+    </section>
+    <section class="stack" style="gap:8px" id="gcExcludedBox" hidden>
+      <strong>Not synced</strong>
+      <ul class="list" id="gcExcluded"></ul>
+    </section>
+    <div class="dlg-actions">
+      <button type="button" class="btn ghost danger" id="gcDisconnect" hidden>Disconnect Google</button>
+      <button type="button" class="btn" data-close>Close</button>
     </div>
   </form>
 </dialog>
@@ -989,6 +1042,12 @@ function onSignedIn(user) {
   hideAuth();
   render();
   syncNow();
+  if (ui.googleReturn) {
+    const { ok, why } = ui.googleReturn;
+    ui.googleReturn = null;
+    toast(ok ? 'Google is connected. Start with Preview.' : `Google wasn't connected: ${why}`);
+    openGoogle();
+  }
 }
 function showAuth(message = '') {
   $('#authError').textContent = message;
@@ -2626,6 +2685,127 @@ $('#ntForm').addEventListener('submit', async e => {
   catch (err) { toast(`Couldn't save: ${err.message}`); }
 });
 
+// ---------- Google Contacts sync ----------
+// The google-contacts function holds the Google sign-in and does the syncing; this
+// screen shows its state and sends it the user's decisions.
+const gcCall = async (action, extra = {}) => {
+  const { data, error } = await sync.client.functions.invoke('google-contacts', { body: { action, ...extra } });
+  if (error) throw new Error(await fnError(error));
+  return data;
+};
+const GC_GROUP = { name: 'Name', nickname: 'Nickname', org: 'Company / job', birthday: 'Birthday', address: 'Address', phones: 'Phones', emails: 'Emails' };
+const gcWhen = s => s ? new Date(s).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+async function openGoogle() {
+  if (!sync.user) return toast('Sign in first.');
+  $('#gcResultBox').hidden = true;
+  $('#gcDlg').showModal();
+  await loadGoogle();
+}
+async function loadGoogle() {
+  let st;
+  try { st = await gcCall('status'); }
+  catch (err) { $('#gcStatus').textContent = `⚠ ${err.message}`; return; }
+  const connected = !!st.connected, on = connected && st.mode === 'all';
+  $('#gcConnectRow').hidden = connected;
+  $('#gcConnect').textContent = st.email && !connected ? 'Connect Google again' : 'Connect Google';
+  $('#gcSetup').hidden = !connected || on;
+  $('#gcOn').hidden = !on;
+  $('#gcDisconnect').hidden = !st.email;
+  const last = st.last ? ` Last sync ${gcWhen(st.last.at)}: ${st.last.changes ? `${st.last.changes} ${st.last.changes === 1 ? 'person' : 'people'} updated` : 'nothing to change'}${st.last.errors ? `, ${st.last.errors} couldn't be updated` : ''}${st.last.waiting ? `, ${st.last.waiting} waiting for the next run` : ''}.` : '';
+  $('#gcStatus').innerHTML = !st.email ? 'Not connected yet. After you connect, Preview shows what would change before anything does.'
+    : `${connected ? 'Connected' : 'Disconnected'} as <strong>${esc(st.email)}</strong>. ${on ? 'Syncing every 5 minutes.' : connected ? 'Not syncing yet.' : ''} ${st.linked ? `${st.linked} people linked.` : ''}${esc(last)}`
+      + (st.lastError ? `<br>⚠ ${esc(st.lastError)}` : '');
+  $('#gcPerson').innerHTML = [...data.people].sort((a, b) => a.name.localeCompare(b.name)).map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  if (ui.gcPerson) $('#gcPerson').value = ui.gcPerson;
+  const conflicts = st.conflicts || [], flags = st.flags || [], excluded = st.excluded || [];
+  $('#gcConflictsBox').hidden = !conflicts.length;
+  $('#gcConflicts').innerHTML = conflicts.map(c => `<li><div class="grow"><strong>${esc(c.name)}</strong> · ${GC_GROUP[c.group]}
+      <div class="small">Circle: ${esc(c.circle) || '(blank)'}<br>Google: ${esc(c.google) || '(blank)'}</div></div>
+      <div class="stack" style="gap:4px"><button type="button" class="btn small" data-gc-settle="${c.personId}" data-group="${c.group}" data-use="circle">Keep Circle's</button>
+      <button type="button" class="btn small" data-gc-settle="${c.personId}" data-group="${c.group}" data-use="google">Keep Google's</button></div></li>`).join('');
+  $('#gcFlagsBox').hidden = !flags.length;
+  $('#gcFlags').innerHTML = flags.map(f => f.kind === 'google_deleted'
+    ? `<li><div class="grow"><strong>${esc(f.name)}</strong><div class="small muted">Removed from Google, still in Circle.</div></div>
+        <div class="stack" style="gap:4px"><button type="button" class="btn small" data-gc-flag="${f.personId}" data-choice="keep">Keep in Circle only</button>
+        <button type="button" class="btn small" data-gc-flag="${f.personId}" data-choice="put_back">Put back in Google</button></div></li>`
+    : `<li><div class="grow"><strong>${esc(f.name)}</strong><div class="small muted">Deleted from Circle, still in Google.</div></div>
+        <div class="stack" style="gap:4px"><button type="button" class="btn small" data-gc-flag="${f.personId}" data-choice="keep">Keep in Google</button>
+        <button type="button" class="btn small danger" data-gc-flag="${f.personId}" data-choice="delete_google">Delete from Google too</button></div></li>`).join('');
+  $('#gcExcludedBox').hidden = !excluded.length;
+  $('#gcExcluded').innerHTML = excluded.map(x => `<li><div class="grow">${esc(x.name)} <span class="small muted">· kept out of Google</span></div>
+      <button type="button" class="btn small" data-gc-include="${x.personId}">Sync again</button></li>`).join('');
+}
+// The people a run changed (or would change), with exactly what goes where.
+function showGoogleResult(r, title) {
+  const lines = (dir, obj) => Object.entries(obj || {}).map(([k, v]) => `<div class="small">${dir} ${esc(k)}: ${esc(v)}</div>`).join('');
+  const changes = r.changes || [];
+  $('#gcResultBox').hidden = false;
+  $('#gcResultTitle').textContent = r.busy ? 'Circle was busy saving. Try again in a moment.' : title(changes);
+  $('#gcResult').innerHTML = changes.map(c => `<li><div class="grow"><strong>${esc(c.name)}</strong>${c.create ? ' <span class="small muted">· new in Google</span>' : ''}
+      ${c.create ? '' : lines('→ Google', c.toGoogle)}${lines('→ Circle', c.toCircle)}${c.photo ? `<div class="small">📷 ${esc(c.photo)}</div>` : ''}
+      ${c.conflicts.map(x => `<div class="small">⚠ ${GC_GROUP[x.group]} differs: Circle "${esc(x.circle)}", Google "${esc(x.google)}"</div>`).join('')}
+      ${c.error ? `<div class="small">⚠ ${esc(c.error)}</div>` : ''}</div>
+      <button type="button" class="btn ghost small" data-gc-exclude="${c.personId}" title="Keep this person out of Google">Don't sync</button></li>`).join('')
+    || '<li class="small muted">Nothing to change: Circle and Google already match.</li>';
+  if (r.flags?.length || r.waiting) $('#gcResultTitle').textContent += r.waiting ? ` ${r.waiting} more will follow on the next runs.` : '';
+}
+async function gcBusy(btn, label, fn) {
+  const was = btn.textContent;
+  btn.disabled = true; btn.textContent = label;
+  try { await fn(); } catch (err) { toast(err.message); } finally { btn.disabled = false; btn.textContent = was; }
+}
+const afterSync = async () => { await loadGoogle(); syncNow(); };
+$('#gcConnect').addEventListener('click', () => gcBusy($('#gcConnect'), 'Opening Google…', async () => { location.href = (await gcCall('connect')).url; }));
+for (const id of ['gcPreview', 'gcPreview2']) $('#' + id).addEventListener('click', () => gcBusy($('#' + id), 'Comparing…', async () => {
+  const r = await gcCall('preview');
+  const creates = r.changes.filter(c => c.create).length, other = r.changes.length - creates;
+  showGoogleResult(r, () => `Preview: ${r.linked} people matched to Google contacts. ${other} would change${creates ? `, ${creates} would be added to Google` : ''}. Nothing has changed yet.`);
+}));
+$('#gcPerson').addEventListener('change', e => { ui.gcPerson = e.target.value; });
+$('#gcSyncOne').addEventListener('click', () => gcBusy($('#gcSyncOne'), 'Syncing…', async () => {
+  const pid = $('#gcPerson').value, name = getPerson(pid)?.name || 'this person';
+  ui.gcPerson = pid;
+  const r = await gcCall('sync', { personId: pid });
+  showGoogleResult(r, ch => ch.length ? `Synced ${name}. Check them here and in Google Contacts.` : `${name} already matches in Google.`);
+  await afterSync();
+}));
+$('#gcTurnOn').addEventListener('click', () => {
+  if (!confirm('Turn on sync for everyone? Circle and Google will update each other every 5 minutes. Deletions are never copied.')) return;
+  gcBusy($('#gcTurnOn'), 'Syncing everyone…', async () => {
+    const r = await gcCall('turn_on');
+    showGoogleResult(r, ch => `Sync is on. First run: ${ch.length} ${ch.length === 1 ? 'person' : 'people'} updated.`);
+    await afterSync();
+  });
+});
+$('#gcSyncNow').addEventListener('click', () => gcBusy($('#gcSyncNow'), 'Syncing…', async () => {
+  const r = await gcCall('sync');
+  showGoogleResult(r, ch => ch.length ? `Synced: ${ch.length} ${ch.length === 1 ? 'person' : 'people'} updated.` : 'Circle and Google already match.');
+  await afterSync();
+}));
+$('#gcPause').addEventListener('click', () => gcBusy($('#gcPause'), 'Pausing…', async () => { await gcCall('pause'); await loadGoogle(); toast('Sync paused. Nothing changes until you turn it on again.'); }));
+$('#gcDisconnect').addEventListener('click', () => {
+  if (!confirm('Disconnect Google? Syncing stops and Circle forgets which contacts are linked. Nothing is deleted in Circle or in Google.')) return;
+  gcBusy($('#gcDisconnect'), 'Disconnecting…', async () => { await gcCall('disconnect'); $('#gcResultBox').hidden = true; await loadGoogle(); });
+});
+$('#gcDlg').addEventListener('click', e => {
+  const settle = e.target.closest('[data-gc-settle]'), flag = e.target.closest('[data-gc-flag]');
+  const exclude = e.target.closest('[data-gc-exclude]'), include = e.target.closest('[data-gc-include]');
+  if (settle) gcBusy(settle, 'Saving…', async () => {
+    await gcCall('settle', { personId: settle.dataset.gcSettle, group: settle.dataset.group, use: settle.dataset.use });
+    await afterSync();
+  });
+  if (flag) {
+    if (flag.dataset.choice === 'delete_google' && !confirm('Delete this contact from Google too? Google keeps it in its Trash for 30 days.')) return;
+    gcBusy(flag, 'Saving…', async () => { await gcCall('resolve_flag', { personId: flag.dataset.gcFlag, choice: flag.dataset.choice }); await loadGoogle(); });
+  }
+  if (exclude) gcBusy(exclude, 'Saving…', async () => {
+    await gcCall('exclude', { personId: exclude.dataset.gcExclude });
+    exclude.closest('li').remove();
+    await loadGoogle();
+  });
+  if (include) gcBusy(include, 'Saving…', async () => { await gcCall('include', { personId: include.dataset.gcInclude }); await loadGoogle(); });
+});
+
 // ---------- Shortcut keys ----------
 // A key is a long random string the iPhone Shortcuts send in an X-Circle-Token
 // header. Only its SHA-256 fingerprint is stored (circle_tokens), so the key
@@ -2800,6 +2980,7 @@ const actions = {
   addFollowUp: () => openFuDlg(ui.selected || null),
   shortcutKeys: () => openKeys(),
   notifications: () => openNotifications(),
+  googleContacts: () => openGoogle(),
   connectedApps: () => { location.href = 'consent.html'; },
   sendQuickNote: () => {
     const text = ui.quickDraft.trim();
@@ -2875,6 +3056,8 @@ document.addEventListener('change', e => {
   const params = new URLSearchParams(location.search);
   if (params.has('note')) { ui.quickDraft = params.get('note'); ui.focusNote = true; }
   if (params.has('note') || params.get('view') === 'today') ui.tab = 'home';
+  // Back from Google sign-in: reopen the sync screen once signed in.
+  if (params.has('google')) ui.googleReturn = { ok: params.get('google') === 'connected', why: params.get('why') || '' };
   if (params.toString()) history.replaceState(null, '', location.pathname);
 }
 loadLocal();
