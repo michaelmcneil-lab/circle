@@ -552,17 +552,21 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
       <span class="hint">No prompts during quiet hours. The morning brief still arrives at its time.</span>
     </section>
     <section class="stack" style="gap:8px">
-      <strong>Calendar</strong>
+      <strong>Calendars</strong>
       <p class="small muted" style="margin:0" id="ntCalStatus"></p>
-      <div id="ntCalNew" class="stack" style="gap:8px">
-        <label class="field"><span>Google Calendar's secret address</span>
-          <input type="url" id="ntCalUrl" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" autocomplete="off" spellcheck="false"></label>
-        <span class="hint">On a computer, open Google Calendar → Settings (⚙) → your calendar under <em>Settings for my calendars</em> → <em>Integrate calendar</em> → copy <em>Secret address in iCal format</em>. It's only stored where Circle's server can read it.</span>
-        <div><button type="button" class="btn" id="ntCalSave">Connect calendar</button></div>
-      </div>
+      <ul class="list" id="ntCalList"></ul>
       <div id="ntCalCheckResult" class="small" hidden></div>
-      <div class="p-actions"><button type="button" class="btn small" id="ntCalCheck" hidden>Check calendar now</button>
-        <button type="button" class="btn ghost small danger" id="ntCalRemove" hidden>Disconnect calendar</button></div>
+      <div><button type="button" class="btn small" id="ntCalCheck" hidden>Check calendars now</button></div>
+      <details id="ntCalNew">
+        <summary class="small" style="cursor:pointer" id="ntCalNewLabel">Connect a calendar</summary>
+        <div class="stack" style="gap:8px;margin-top:8px">
+          <label class="field"><span>Name</span><input type="text" id="ntCalLabel" placeholder="e.g. Personal or Family" maxlength="40"></label>
+          <label class="field"><span>Google Calendar's secret address</span>
+            <input type="url" id="ntCalUrl" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" autocomplete="off" spellcheck="false"></label>
+          <span class="hint">On a computer, open Google Calendar → Settings (⚙) → the calendar under <em>Settings for my calendars</em> → <em>Integrate calendar</em> → copy <em>Secret address in iCal format</em>. Each calendar has its own. It's only stored where Circle's server can read it.</span>
+          <div><button type="button" class="btn" id="ntCalSave">Connect</button></div>
+        </div>
+      </details>
     </section>
     <div class="dlg-actions">
       <button type="button" class="btn" data-close>Cancel</button>
@@ -2420,16 +2424,41 @@ async function showDeviceStatus() {
   btn.textContent = sub ? 'Turn off on this device' : 'Turn on notifications';
   btn.classList.toggle('primary', !sub);
 }
-function showCalendarStatus(row) {
-  const s = $('#ntCalStatus');
-  const connected = !!row?.calendar_checked_at;
-  $('#ntCalRemove').hidden = !connected;
-  $('#ntCalCheck').hidden = !connected;
-  $('#ntCalCheckResult').hidden = true;
-  if (!connected) s.textContent = 'Not connected. Connect it to get meeting prep in the morning brief and "How did it go?" prompts.';
-  else if (row.calendar_error) s.textContent = `⚠ Couldn't read your calendar: ${row.calendar_error}`;
-  else s.textContent = `Connected · checked ${new Date(row.calendar_checked_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. Paste a new address below only if you reset it in Google.`;
+// The calendar list comes from the server, which holds the addresses: the app only sees names.
+let calendars = [];
+async function loadCalendars() {
+  const { data, error } = await sync.client.functions.invoke('notify', { body: { action: 'list_calendars' } });
+  calendars = error ? [] : data.calendars;
+  const time = s => s ? new Date(s).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+  $('#ntCalList').innerHTML = calendars.map(c => `<li><div class="grow"><strong>${esc(c.label)}</strong>
+      <div class="small ${c.last_error ? '' : 'muted'}">${c.last_error ? `⚠ ${esc(c.last_error)}` : c.checked_at ? `Checked ${time(c.checked_at)}` : 'Waiting for the first check'}</div></div>
+      <button type="button" class="btn ghost small" data-cal-rename="${c.id}">Rename</button>
+      <button type="button" class="btn ghost small danger" data-cal-remove="${c.id}">Disconnect</button></li>`).join('');
+  $('#ntCalStatus').textContent = calendars.length ? '' : 'No calendar connected. Connect one to get meeting prep in the morning brief and "How did it go?" prompts.';
+  $('#ntCalStatus').hidden = !!calendars.length;
+  $('#ntCalCheck').hidden = !calendars.length;
+  $('#ntCalNewLabel').textContent = calendars.length ? '+ Add another calendar' : 'Connect a calendar';
+  $('#ntCalNew').open = !calendars.length;
+  if (error) $('#ntCalStatus').textContent = `⚠ Couldn't load your calendars: ${await fnError(error)}`;
 }
+$('#ntCalList').addEventListener('click', async e => {
+  const rename = e.target.closest('[data-cal-rename]'), remove = e.target.closest('[data-cal-remove]');
+  const cal = calendars.find(c => c.id === (rename || remove)?.dataset[rename ? 'calRename' : 'calRemove']);
+  if (!cal) return;
+  if (rename) {
+    const label = prompt('Name for this calendar', cal.label)?.trim();
+    if (!label || label === cal.label) return;
+    const { error } = await sync.client.functions.invoke('notify', { body: { action: 'rename_calendar', id: cal.id, label } });
+    if (error) return toast(`Couldn't rename: ${await fnError(error)}`);
+  } else {
+    if (!confirm(`Disconnect ${cal.label}? Circle will stop reading it and forget its address.`)) return;
+    const { error } = await sync.client.functions.invoke('notify', { body: { action: 'remove_calendar', id: cal.id } });
+    if (error) return toast(`Couldn't disconnect: ${await fnError(error)}`);
+  }
+  $('#ntCalCheckResult').hidden = true;
+  await loadCalendars();
+  loadAgenda();
+});
 async function openNotifications() {
   if (!sync.user) return toast('Sign in first.');
   const { data: row } = await sync.client.from('circle_settings').select('*').eq('user_id', sync.user.id).maybeSingle();
@@ -2439,10 +2468,12 @@ async function openNotifications() {
   f.quiet_start.value = row?.quiet_start || '21:00';
   f.quiet_end.value = row?.quiet_end || '07:00';
   f.prompt_max_people.value = String(row?.prompt_max_people ?? 4);
-  $('#ntCalUrl').value = '';
-  showCalendarStatus(row);
+  $('#ntCalUrl').value = ''; $('#ntCalLabel').value = '';
+  $('#ntCalCheckResult').hidden = true;
+  $('#ntCalList').innerHTML = '<li class="small muted">Loading…</li>';
   $('#ntDlg').showModal();
   showDeviceStatus();
+  loadCalendars();
 }
 // Saves the settings shown in the dialog (also creates them, so the server starts checking).
 async function saveNotificationSettings() {
@@ -2491,13 +2522,14 @@ $('#ntCalSave').addEventListener('click', async () => {
   btn.disabled = true; btn.textContent = 'Checking…';
   try {
     await saveNotificationSettings();
-    const { data, error } = await sync.client.functions.invoke('notify', { body: { action: 'save_calendar', url } });
-    if (error) { $('#ntCalStatus').textContent = `⚠ ${await fnError(error)}`; return; }
-    $('#ntCalUrl').value = '';
-    $('#ntCalStatus').textContent = `Connected. ${data.meetings} meeting${data.meetings === 1 ? '' : 's'} with your people in the next two days.`;
-    $('#ntCalRemove').hidden = false;
+    const label = $('#ntCalLabel').value.trim();
+    const { data, error } = await sync.client.functions.invoke('notify', { body: { action: 'save_calendar', url, label } });
+    if (error) { toast(await fnError(error)); return; }
+    $('#ntCalUrl').value = ''; $('#ntCalLabel').value = '';
+    toast(`${data.label} connected. ${data.meetings} meeting${data.meetings === 1 ? '' : 's'} with your people in the next two days.`);
+    await loadCalendars();
     loadAgenda();
-  } finally { btn.disabled = false; btn.textContent = 'Connect calendar'; }
+  } finally { btn.disabled = false; btn.textContent = 'Connect'; }
 });
 // Shows what Circle can see in the calendar, so a missing meeting can be explained.
 $('#ntCalCheck').addEventListener('click', async () => {
@@ -2508,19 +2540,15 @@ $('#ntCalCheck').addEventListener('click', async () => {
     out.hidden = false;
     if (error) { out.textContent = `⚠ ${await fnError(error)}`; return; }
     const li = items => items.map(x => `<li>${esc(x)}</li>`).join('');
-    out.innerHTML = `<p style="margin:0 0 4px"><strong>Today to two days ahead</strong>, as Circle sees your calendar:</p>`
-      + (data.matched.length ? `<p style="margin:6px 0 2px">With people in Circle:</p><ul style="margin:0;padding-left:18px">${li(data.matched.map(m => `${m.when}: ${m.title} (${m.people.join(', ')})`))}</ul>` : '<p class="muted" style="margin:4px 0">No meetings with people in Circle.</p>')
-      + (data.others.length ? `<p style="margin:6px 0 2px">Other events (no one in Circle recognized):</p><ul style="margin:0;padding-left:18px">${li(data.others.map(m => `${m.when}: ${m.title}`))}</ul>` : '')
+    const from = m => calendars.length > 1 && m.calendar ? ` [${m.calendar}]` : '';
+    out.innerHTML = `<p style="margin:0 0 4px"><strong>Today to two days ahead</strong>, as Circle sees your calendars:</p>`
+      + (data.errors ? `<p style="margin:4px 0">⚠ ${esc(data.errors)}</p>` : '')
+      + (data.matched.length ? `<p style="margin:6px 0 2px">With people in Circle:</p><ul style="margin:0;padding-left:18px">${li(data.matched.map(m => `${m.when}: ${m.title} (${m.people.join(', ')})${from(m)}`))}</ul>` : '<p class="muted" style="margin:4px 0">No meetings with people in Circle.</p>')
+      + (data.others.length ? `<p style="margin:6px 0 2px">Other events (no one in Circle recognized):</p><ul style="margin:0;padding-left:18px">${li(data.others.map(m => `${m.when}: ${m.title}${from(m)}`))}</ul>` : '')
       + (!data.matched.length && !data.others.length ? '<p class="muted" style="margin:4px 0">Google is not showing any timed events yet. New events can take a few hours to appear in the secret address.</p>' : '');
+    loadCalendars();
     loadAgenda();
-  } finally { btn.disabled = false; btn.textContent = 'Check calendar now'; }
-});
-$('#ntCalRemove').addEventListener('click', async () => {
-  if (!confirm('Disconnect your calendar? Circle will stop reading it and forget its address.')) return;
-  const { error } = await sync.client.functions.invoke('notify', { body: { action: 'remove_calendar' } });
-  if (error) return toast(`Couldn't disconnect: ${await fnError(error)}`);
-  agenda = []; render();
-  showCalendarStatus(null);
+  } finally { btn.disabled = false; btn.textContent = 'Check calendars now'; }
 });
 $('#ntForm').addEventListener('submit', async e => {
   e.preventDefault();

@@ -161,35 +161,60 @@ async function userEmail(userId: string) {
   return data?.user?.email ?? "";
 }
 
-// Re-reads the calendar and records meetings from yesterday to two days ahead.
-async function refreshAgenda(userId: string, doc: Doc, url?: string, seen?: { title: string; start: Date }[]) {
-  if (!url) {
-    const { data } = await admin.from("circle_calendar_links").select("url").eq("user_id", userId).maybeSingle();
-    url = data?.url;
-  }
-  if (!url) return null;
-  try {
-    const now = Date.now();
-    const meetings = meetingsFrom(await fetchCalendar(url), doc, await userEmail(userId), new Date(now - 864e5), new Date(now + 2 * 864e5), seen);
-    const { data: existing } = await admin.from("circle_agenda").select("event_key, prompted").eq("user_id", userId);
-    const prompted = new Map((existing ?? []).map((r) => [r.event_key, r.prompted]));
-    if (meetings.length) {
-      await admin.from("circle_agenda").upsert(meetings.map((m) => ({
-        user_id: userId, event_key: m.key, start_at: m.start.toISOString(), end_at: m.end.toISOString(), title: m.title,
-        person_ids: m.personIds, attendee_count: m.attendees, prompted: prompted.get(m.key) ?? false, updated_at: new Date().toISOString(),
-      })), { onConflict: "user_id,event_key" });
+type Seen = { title: string; start: Date; calendar: string };
+type Link = { id: string; label: string; url: string };
+
+async function linksFor(userId: string): Promise<Link[]> {
+  const { data, error } = await admin.from("circle_calendar_links").select("id, label, url").eq("user_id", userId).order("updated_at");
+  if (error) throw new Error(`calendar list unavailable: ${error.message}`);
+  return data ?? [];
+}
+
+// Re-reads every connected calendar and records meetings from yesterday to two days
+// ahead. A calendar that fails doesn't stop the others; its error is kept on its link.
+async function refreshAgenda(userId: string, doc: Doc, seen?: Seen[]) {
+  const links = await linksFor(userId);
+  if (!links.length) return null;
+  const now = Date.now(), from = new Date(now - 864e5), to = new Date(now + 2 * 864e5);
+  const self = await userEmail(userId);
+  const byKey = new Map<string, Meeting & { calendar: string }>();
+  const failed: string[] = [];
+  for (const link of links) {
+    try {
+      const mine: { title: string; start: Date }[] = [];
+      for (const m of meetingsFrom(await fetchCalendar(link.url), doc, self, from, to, mine)) {
+        // The same event in two calendars (a shared family calendar) counts once.
+        const dupe = [...byKey.values()].some((x) => x.title === m.title && +x.start === +m.start);
+        if (!byKey.has(m.key) && !dupe) byKey.set(m.key, { ...m, calendar: link.label });
+      }
+      seen?.push(...mine.map((e) => ({ ...e, calendar: link.label })));
+      await admin.from("circle_calendar_links").update({ last_error: null, checked_at: new Date().toISOString() }).eq("id", link.id);
+    } catch (err) {
+      const msg = (err instanceof Error ? err.message : String(err)).slice(0, 300);
+      failed.push(`${link.label}: ${msg}`);
+      await admin.from("circle_calendar_links").update({ last_error: msg, checked_at: new Date().toISOString() }).eq("id", link.id);
     }
-    // Drop meetings that were cancelled or are now in the past.
+  }
+  const meetings = [...byKey.values()];
+  const { data: existing } = await admin.from("circle_agenda").select("event_key, prompted").eq("user_id", userId);
+  const prompted = new Map((existing ?? []).map((r) => [r.event_key, r.prompted]));
+  if (meetings.length) {
+    const { error } = await admin.from("circle_agenda").upsert(meetings.map((m) => ({
+      user_id: userId, event_key: m.key, start_at: m.start.toISOString(), end_at: m.end.toISOString(), title: m.title, calendar_label: m.calendar,
+      person_ids: m.personIds, attendee_count: m.attendees, prompted: prompted.get(m.key) ?? false, updated_at: new Date().toISOString(),
+    })), { onConflict: "user_id,event_key" });
+    if (error) console.error("agenda not saved", error);
+  }
+  // Drop meetings that were cancelled or are now in the past, but only when every
+  // calendar was read: otherwise a failed one would look like its meetings were cancelled.
+  if (!failed.length) {
     const keep = new Set(meetings.map((m) => m.key));
     const gone = [...prompted.keys()].filter((k) => !keep.has(k));
     if (gone.length) await admin.from("circle_agenda").delete().eq("user_id", userId).in("event_key", gone);
-    await admin.from("circle_settings").update({ calendar_checked_at: new Date().toISOString(), calendar_error: null }).eq("user_id", userId);
-    return meetings;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    await admin.from("circle_settings").update({ calendar_checked_at: new Date().toISOString(), calendar_error: msg.slice(0, 300) }).eq("user_id", userId);
-    throw err;
   }
+  await admin.from("circle_settings").update({ calendar_checked_at: new Date().toISOString(),
+    calendar_error: failed.length ? failed.join(" · ").slice(0, 300) : null }).eq("user_id", userId);
+  return meetings;
 }
 
 // ---------- The morning brief ----------
@@ -306,46 +331,73 @@ Deno.serve(async (req) => {
     const sent = await push(user.id, { title: "Circle notifications are on", body: "You'll get your morning brief and after-meeting prompts here.", url: APP_URL, tag: "test" });
     return json({ sent });
   }
+  if (body.action === "list_calendars") {
+    const { data } = await admin.from("circle_calendar_links").select("id, label, last_error, checked_at").eq("user_id", user.id).order("updated_at");
+    return json({ calendars: data ?? [] });
+  }
   if (body.action === "save_calendar") {
     const url = String(body.url ?? "").trim().replace(/^webcal:/i, "https:");
+    const label = String(body.label ?? "").trim().slice(0, 40);
     if (!/^https:\/\/\S+$/i.test(url)) return json({ error: "Paste the calendar's secret address. It starts with https://" }, 400);
     await settingsFor(user.id);
+    const doc = await loadDoc(user.id);
+    // Check the link on its own first, so a bad one is never saved.
+    let found: Meeting[];
     try {
-      const doc = await loadDoc(user.id);
-      const meetings = await refreshAgenda(user.id, doc, url);
-      await admin.from("circle_calendar_links").upsert({ user_id: user.id, url, updated_at: new Date().toISOString() });
-      return json({ ok: true, meetings: meetings?.length ?? 0 });
+      const now = Date.now();
+      found = meetingsFrom(await fetchCalendar(url), doc, await userEmail(user.id), new Date(now - 864e5), new Date(now + 2 * 864e5));
     } catch (err) {
       return json({ error: `Couldn't read that calendar: ${err instanceof Error ? err.message : err}` }, 400);
     }
+    const links = await linksFor(user.id);
+    const existing = links.find((l) => l.url === url);
+    const name = label || existing?.label || `Calendar ${links.length + 1}`;
+    const { error } = existing
+      ? await admin.from("circle_calendar_links").update({ label: name, last_error: null }).eq("id", existing.id)
+      : await admin.from("circle_calendar_links").insert({ user_id: user.id, url, label: name });
+    if (error) return json({ error: `Couldn't save the calendar: ${error.message}` }, 500);
+    await refreshAgenda(user.id, doc);
+    return json({ ok: true, label: name, meetings: found.length });
+  }
+  if (body.action === "rename_calendar") {
+    const label = String(body.label ?? "").trim().slice(0, 40);
+    if (!label) return json({ error: "Give the calendar a name" }, 400);
+    const { data: link } = await admin.from("circle_calendar_links").select("label").eq("id", body.id).eq("user_id", user.id).maybeSingle();
+    if (!link) return json({ error: "Calendar not found" }, 404);
+    const { error } = await admin.from("circle_calendar_links").update({ label }).eq("id", body.id).eq("user_id", user.id);
+    if (error) return json({ error: error.message }, 500);
+    await admin.from("circle_agenda").update({ calendar_label: label }).eq("user_id", user.id).eq("calendar_label", link.label);
+    return json({ ok: true });
   }
   if (body.action === "remove_calendar") {
-    await admin.from("circle_calendar_links").delete().eq("user_id", user.id);
-    await admin.from("circle_agenda").delete().eq("user_id", user.id);
-    await admin.from("circle_settings").update({ calendar_checked_at: null, calendar_error: null }).eq("user_id", user.id);
+    await admin.from("circle_calendar_links").delete().eq("id", body.id).eq("user_id", user.id);
+    if ((await linksFor(user.id)).length) {
+      // Re-read the others; meetings only the removed calendar had disappear.
+      await refreshAgenda(user.id, await loadDoc(user.id));
+    } else {
+      await admin.from("circle_agenda").delete().eq("user_id", user.id);
+      await admin.from("circle_settings").update({ calendar_checked_at: null, calendar_error: null }).eq("user_id", user.id);
+    }
     return json({ ok: true });
   }
   if (body.action === "check_calendar") {
-    // What Circle can see in the calendar right now, matched or not.
+    // What Circle can see in the calendars right now, matched or not.
     const s = await settingsFor(user.id);
     const tz = s.time_zone || "America/Los_Angeles";
-    const seen: { title: string; start: Date }[] = [];
-    try {
-      const doc = await loadDoc(user.id);
-      const meetings = await refreshAgenda(user.id, doc, undefined, seen);
-      if (!meetings) return json({ error: "No calendar is connected." }, 400);
-      const when = (d: Date) => `${local(tz, d).date} ${clock(tz, d)}`;
-      const matchedKeys = new Set(meetings.map((m) => `${m.title}|${m.start.toISOString()}`));
-      return json({
-        ok: true, checkedAt: new Date().toISOString(),
-        matched: meetings.sort((a, b) => +a.start - +b.start).map((m) => ({ when: when(m.start), title: m.title,
-          people: m.personIds.map((id) => doc.people.find((p) => p.id === id)?.name).filter(Boolean) })),
-        others: seen.filter((e) => !matchedKeys.has(`${e.title}|${e.start.toISOString()}`)).sort((a, b) => +a.start - +b.start)
-          .slice(0, 15).map((e) => ({ when: when(e.start), title: e.title })),
-      });
-    } catch (err) {
-      return json({ error: `Couldn't read your calendar: ${err instanceof Error ? err.message : err}` }, 400);
-    }
+    const seen: Seen[] = [];
+    const doc = await loadDoc(user.id);
+    const meetings = await refreshAgenda(user.id, doc, seen);
+    if (!meetings) return json({ error: "No calendar is connected." }, 400);
+    const when = (d: Date) => `${local(tz, d).date} ${clock(tz, d)}`;
+    const matchedKeys = new Set(meetings.map((m) => `${m.title}|${m.start.toISOString()}`));
+    const { data: fresh } = await admin.from("circle_settings").select("calendar_error").eq("user_id", user.id).maybeSingle();
+    return json({
+      ok: true, checkedAt: new Date().toISOString(), errors: fresh?.calendar_error ?? null,
+      matched: meetings.sort((a, b) => +a.start - +b.start).map((m) => ({ when: when(m.start), title: m.title, calendar: m.calendar,
+        people: m.personIds.map((id) => doc.people.find((p) => p.id === id)?.name).filter(Boolean) })),
+      others: seen.filter((e) => !matchedKeys.has(`${e.title}|${e.start.toISOString()}`)).sort((a, b) => +a.start - +b.start)
+        .slice(0, 20).map((e) => ({ when: when(e.start), title: e.title, calendar: e.calendar })),
+    });
   }
   if (body.action === "refresh") return json({ ok: true, ...(await runUser(await settingsFor(user.id), true)) });
   return json({ error: "Unknown action" }, 400);
