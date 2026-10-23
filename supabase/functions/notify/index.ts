@@ -76,7 +76,11 @@ async function push(userId: string, payload: Payload) {
 }
 
 // ---------- Calendar ----------
-type Meeting = { key: string; start: Date; end: Date; title: string; personIds: string[]; attendees: number };
+// An event from a calendar. personIds lists who in Circle it involves (often nobody).
+// All-day events carry their date; their start and end are set to noon UTC on that day,
+// which keeps them on the right date in every time zone.
+type Meeting = { key: string; start: Date; end: Date; title: string; personIds: string[]; attendees: number; allDay: boolean; date: string };
+const DAYS_AHEAD = 31;
 
 // Turns a calendar feed into meetings between `from` and `to` that include someone in Circle.
 // A calendar feed can hold many years of events (iCloud family calendars often do),
@@ -125,8 +129,8 @@ function nearStart(e: InstanceType<typeof ICAL.Event>, from: InstanceType<typeof
   return start;
 }
 
-// `seen`, if given, collects every timed event in the window, matched or not (for "Check calendar now").
-function meetingsFrom(ics: string, doc: Doc, selfEmail: string, from: Date, to: Date, seen?: { title: string; start: Date }[]): Meeting[] {
+// Every event between `from` and `to`, with who in Circle each one involves.
+function meetingsFrom(ics: string, doc: Doc, selfEmail: string, from: Date, to: Date): Meeting[] {
   const root = new ICAL.Component(ICAL.parse(trimFeed(ics, from, to)));
   for (const tz of root.getAllSubcomponents("vtimezone")) ICAL.TimezoneService.register(tz);
   const events = root.getAllSubcomponents("vevent").map((v) => new ICAL.Event(v));
@@ -145,7 +149,6 @@ function meetingsFrom(ics: string, doc: Doc, selfEmail: string, from: Date, to: 
 
   const out: Meeting[] = [];
   const add = (e: InstanceType<typeof ICAL.Event>, start: InstanceType<typeof ICAL.Time>, end: InstanceType<typeof ICAL.Time>) => {
-    if (start.isDate) return; // all-day events aren't meetings
     const vevent = e.component;
     if (String(vevent.getFirstPropertyValue("status") ?? "").toUpperCase() === "CANCELLED") return;
     const attendees = vevent.getAllProperties("attendee").map((a) => ({
@@ -154,7 +157,6 @@ function meetingsFrom(ics: string, doc: Doc, selfEmail: string, from: Date, to: 
       status: String(a.getParameter("partstat") ?? "").toUpperCase(),
     }));
     if (attendees.some((a) => a.email === self && a.status === "DECLINED")) return;
-    if (!isNaN(+start.toJSDate())) seen?.push({ title: e.summary || "(no title)", start: start.toJSDate() });
     const ids = new Set<string>();
     for (const a of attendees) if (a.email !== self && byEmail.has(a.email)) ids.add(byEmail.get(a.email)!);
     const text = [e.summary ?? "", ...attendees.map((a) => a.name)].join(" | ");
@@ -166,12 +168,14 @@ function meetingsFrom(ics: string, doc: Doc, selfEmail: string, from: Date, to: 
       if (first.length >= 3 && firstNames.get(first.toLowerCase()) === 1) names.push(first);
       if (names.some((n) => word(String(n)).test(text))) ids.add(p.id);
     }
-    if (!ids.size) return;
-    const startJs = start.toJSDate(), endJs = end.toJSDate();
+    const noon = (t: InstanceType<typeof ICAL.Time>) => new Date(Date.UTC(t.year, t.month - 1, t.day, 12));
+    const allDay = start.isDate;
+    const startJs = allDay ? noon(start) : start.toJSDate(), endJs = allDay ? noon(end) : end.toJSDate();
     if (isNaN(+startJs) || isNaN(+endJs)) return; // a date the feed doesn't spell out properly
+    const date = allDay ? startJs.toISOString().slice(0, 10) : "";
     out.push({
-      key: `${e.uid}|${startJs.toISOString()}`, start: startJs, end: endJs, title: e.summary || "Meeting", personIds: [...ids],
-      attendees: Math.max(attendees.filter((a) => a.status !== "DECLINED").length, ids.size + 1),
+      key: `${e.uid}|${allDay ? date : startJs.toISOString()}`, start: startJs, end: endJs, title: e.summary || "(no title)", personIds: [...ids],
+      attendees: Math.max(attendees.filter((a) => a.status !== "DECLINED").length, ids.size + 1), allDay, date,
     });
   };
 
@@ -210,7 +214,6 @@ async function userEmail(userId: string) {
   return data?.user?.email ?? "";
 }
 
-type Seen = { title: string; start: Date; calendar: string };
 type Link = { id: string; label: string; url: string };
 
 async function linksFor(userId: string): Promise<Link[]> {
@@ -221,22 +224,20 @@ async function linksFor(userId: string): Promise<Link[]> {
 
 // Re-reads every connected calendar and records meetings from yesterday to two days
 // ahead. A calendar that fails doesn't stop the others; its error is kept on its link.
-async function refreshAgenda(userId: string, doc: Doc, seen?: Seen[]) {
+async function refreshAgenda(userId: string, doc: Doc) {
   const links = await linksFor(userId);
   if (!links.length) return null;
-  const now = Date.now(), from = new Date(now - 864e5), to = new Date(now + 2 * 864e5);
+  const now = Date.now(), from = new Date(now - 864e5), to = new Date(now + DAYS_AHEAD * 864e5);
   const self = await userEmail(userId);
   const byKey = new Map<string, Meeting & { calendar: string }>();
   const failed: string[] = [];
   for (const link of links) {
     try {
-      const mine: { title: string; start: Date }[] = [];
-      for (const m of meetingsFrom(await fetchCalendar(link.url), doc, self, from, to, mine)) {
+      for (const m of meetingsFrom(await fetchCalendar(link.url), doc, self, from, to)) {
         // The same event in two calendars (a shared family calendar) counts once.
         const dupe = [...byKey.values()].some((x) => x.title === m.title && +x.start === +m.start);
         if (!byKey.has(m.key) && !dupe) byKey.set(m.key, { ...m, calendar: link.label });
       }
-      seen?.push(...mine.map((e) => ({ ...e, calendar: link.label })));
       await admin.from("circle_calendar_links").update({ last_error: null, checked_at: new Date().toISOString() }).eq("id", link.id);
     } catch (err) {
       const msg = (err instanceof Error ? err.message : String(err)).slice(0, 300);
@@ -249,7 +250,7 @@ async function refreshAgenda(userId: string, doc: Doc, seen?: Seen[]) {
   const prompted = new Map((existing ?? []).map((r) => [r.event_key, r.prompted]));
   if (meetings.length) {
     const { error } = await admin.from("circle_agenda").upsert(meetings.map((m) => ({
-      user_id: userId, event_key: m.key, start_at: m.start.toISOString(), end_at: m.end.toISOString(), title: m.title, calendar_label: m.calendar,
+      user_id: userId, event_key: m.key, start_at: m.start.toISOString(), end_at: m.end.toISOString(), title: m.title, calendar_label: m.calendar, all_day: m.allDay, start_date: m.date || null,
       person_ids: m.personIds, attendee_count: m.attendees, prompted: prompted.get(m.key) ?? false, updated_at: new Date().toISOString(),
     })), { onConflict: "user_id,event_key" });
     if (error) console.error("agenda not saved", error);
@@ -317,9 +318,10 @@ async function runUser(s: Settings, force = false) {
   if (s.last_brief_date !== now.date && now.hm >= s.brief_time && now.hm < BRIEF_LATEST && (weekday || s.brief_weekends)) {
     const c = new Circle(doc, tz);
     const dayStart = new Date(Date.now() - 864e5).toISOString(), dayEnd = new Date(Date.now() + 864e5).toISOString();
-    const { data: rows } = await admin.from("circle_agenda").select("start_at, person_ids").eq("user_id", s.user_id)
+    const { data: rows } = await admin.from("circle_agenda").select("start_at, person_ids, all_day").eq("user_id", s.user_id)
       .gte("start_at", dayStart).lte("start_at", dayEnd).order("start_at");
-    const today = (rows ?? []).filter((r) => local(tz, new Date(r.start_at)).date === now.date && new Date(r.start_at).getTime() > Date.now() - 3600e3);
+    const today = (rows ?? []).filter((r) => r.person_ids?.length && !r.all_day
+      && local(tz, new Date(r.start_at)).date === now.date && new Date(r.start_at).getTime() > Date.now() - 3600e3);
     const payload = brief(c, tz, today);
     if (payload) result.brief = await push(s.user_id, payload);
     await admin.from("circle_settings").update({ last_brief_date: now.date }).eq("user_id", s.user_id);
@@ -327,11 +329,11 @@ async function runUser(s: Settings, force = false) {
 
   if (s.prompt_max_people > 0) {
     const since = new Date(Date.now() - PROMPT_WITHIN_MIN * 60000).toISOString();
-    const { data: ended } = await admin.from("circle_agenda").select("event_key, title, person_ids, attendee_count")
+    const { data: ended } = await admin.from("circle_agenda").select("event_key, title, person_ids, attendee_count").eq("all_day", false)
       .eq("user_id", s.user_id).eq("prompted", false).lte("end_at", new Date().toISOString()).gte("end_at", since);
     const quiet = isQuiet(now.hm, s.quiet_start, s.quiet_end);
     for (const m of ended ?? []) {
-      if (m.attendee_count <= s.prompt_max_people && !quiet) {
+      if (m.person_ids?.length && m.attendee_count <= s.prompt_max_people && !quiet) {
         const names = m.person_ids.map((id: string) => doc.people.find((p) => p.id === id)?.firstName || "them").join(" & ");
         await push(s.user_id, {
           title: `How did it go with ${names}?`, body: `${m.title} just ended. Tap to add a note.`,
@@ -404,7 +406,7 @@ async function handle(req: Request): Promise<Response> {
     let found: Meeting[];
     try {
       const now = Date.now();
-      found = meetingsFrom(await fetchCalendar(url), doc, await userEmail(user.id), new Date(now - 864e5), new Date(now + 2 * 864e5));
+      found = meetingsFrom(await fetchCalendar(url), doc, await userEmail(user.id), new Date(now - 864e5), new Date(now + DAYS_AHEAD * 864e5));
     } catch (err) {
       return json({ error: `Couldn't read that calendar: ${err instanceof Error ? err.message : err}` }, 400);
     }
@@ -416,7 +418,7 @@ async function handle(req: Request): Promise<Response> {
       : await admin.from("circle_calendar_links").insert({ user_id: user.id, url, label: name });
     if (error) return json({ error: `Couldn't save the calendar: ${error.message}` }, 500);
     await refreshAgenda(user.id, doc);
-    return json({ ok: true, label: name, meetings: found.length });
+    return json({ ok: true, label: name, events: found.length, meetings: found.filter((m) => m.personIds.length && +m.start < Date.now() + 2 * 864e5).length });
   }
   if (body.action === "rename_calendar") {
     const label = String(body.label ?? "").trim().slice(0, 40);
@@ -440,22 +442,20 @@ async function handle(req: Request): Promise<Response> {
     return json({ ok: true });
   }
   if (body.action === "check_calendar") {
-    // What Circle can see in the calendars right now, matched or not.
+    // What Circle can see in the calendars for the next two days, with or without people.
     const s = await settingsFor(user.id);
     const tz = s.time_zone || "America/Los_Angeles";
-    const seen: Seen[] = [];
     const doc = await loadDoc(user.id);
-    const meetings = await refreshAgenda(user.id, doc, seen);
+    const meetings = await refreshAgenda(user.id, doc);
     if (!meetings) return json({ error: "No calendar is connected." }, 400);
-    const when = (d: Date) => `${local(tz, d).date} ${clock(tz, d)}`;
-    const matchedKeys = new Set(meetings.map((m) => `${m.title}|${m.start.toISOString()}`));
+    const soon = meetings.filter((m) => +m.start < Date.now() + 2 * 864e5).sort((a, b) => +a.start - +b.start);
+    const when = (m: Meeting) => m.allDay ? `${m.date} (all day)` : `${local(tz, m.start).date} ${clock(tz, m.start)}`;
     const { data: fresh } = await admin.from("circle_settings").select("calendar_error").eq("user_id", user.id).maybeSingle();
     return json({
-      ok: true, checkedAt: new Date().toISOString(), errors: fresh?.calendar_error ?? null,
-      matched: meetings.sort((a, b) => +a.start - +b.start).map((m) => ({ when: when(m.start), title: m.title, calendar: m.calendar,
+      ok: true, checkedAt: new Date().toISOString(), errors: fresh?.calendar_error ?? null, total: meetings.length,
+      matched: soon.filter((m) => m.personIds.length).map((m) => ({ when: when(m), title: m.title, calendar: m.calendar,
         people: m.personIds.map((id) => doc.people.find((p) => p.id === id)?.name).filter(Boolean) })),
-      others: seen.filter((e) => !matchedKeys.has(`${e.title}|${e.start.toISOString()}`)).sort((a, b) => +a.start - +b.start)
-        .slice(0, 20).map((e) => ({ when: when(e.start), title: e.title, calendar: e.calendar })),
+      others: soon.filter((m) => !m.personIds.length).slice(0, 20).map((m) => ({ when: when(m), title: m.title, calendar: m.calendar })),
     });
   }
   if (body.action === "refresh") return json({ ok: true, ...(await runUser(await settingsFor(user.id), true)) });

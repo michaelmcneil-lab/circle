@@ -228,3 +228,8 @@ create unique index if not exists circle_calendar_links_user_url on public.circl
 
 -- Which calendar each upcoming meeting came from.
 alter table public.circle_agenda add column if not exists calendar_label text;
+
+-- All calendar events for Coming up (see all-calendar-events.sql).
+alter table public.circle_agenda add column if not exists all_day boolean not null default false;
+alter table public.circle_agenda add column if not exists start_date date; -- the date of an all-day event
+create index if not exists circle_agenda_user_start on public.circle_agenda (user_id, start_at);

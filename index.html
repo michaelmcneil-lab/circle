@@ -1299,7 +1299,24 @@ function renderHome() {
       upcoming.push({ p, days: a.days, label: `${icon} ${esc(m.name)}'s birthday (${esc(p.firstName)}'s ${relLabel(m.rel).toLowerCase()})${a.years > 0 && a.years < 130 ? ` — turns ${a.years}` : ''}` });
     });
   });
-  upcoming.sort((a, b) => a.days - b.days);
+  // Calendar events, with or without people in Circle. Today's meetings with your
+  // people are on the Today card already, and events that have finished are left out.
+  const multiCal = new Set(agenda.map(m => m.calendar_label).filter(Boolean)).size > 1;
+  const calEvents = agenda.filter(m => {
+    const days = -daysSince(eventDate(m));
+    if (days < 0 || days > REMIND_DAYS) return false;
+    if (!m.all_day && new Date(m.end_at).getTime() < Date.now()) return false;
+    return !(days === 0 && !m.all_day && m.person_ids.some(getPerson));
+  });
+  const CAL_LIMIT = 15;
+  for (const m of calEvents.slice(0, CAL_LIMIT)) {
+    const p = m.person_ids.map(getPerson).find(Boolean);
+    const time = m.all_day ? 'All day' : new Date(m.start_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    upcoming.push({ p, days: -daysSince(eventDate(m)), cal: true, people: m.person_ids,
+      label: `${p ? '📅 ' : ''}${esc(m.title || 'Event')} · ${time}${multiCal && m.calendar_label ? ` · ${esc(m.calendar_label)}` : ''}` });
+  }
+  const moreCal = Math.max(0, calEvents.length - CAL_LIMIT);
+  upcoming.sort((a, b) => a.days - b.days || (a.cal ? 1 : 0) - (b.cal ? 1 : 0));
 
   const hard = data.people.map(p => ({ p, e: hardNow(p)[0] })).filter(x => x.e)
     .sort((a, b) => b.e.date.localeCompare(a.e.date));
@@ -1334,7 +1351,12 @@ function renderHome() {
           ${follows.length ? followUpGroups(follows, null, 12) : empty('Nothing to follow up on. Add one here or when you log a conversation.')}
         </section>
         <section class="card"><h2>Coming up · next ${REMIND_DAYS} days</h2>
-          ${upcoming.length ? `<ul class="list">${upcoming.map(u => `<li>${avatar(u.p)}<div class="grow">${personLink(u.p)}<div class="small muted">${u.label}</div></div><span class="pill ${u.days <= 7 ? 'accent' : ''}">${inDays(u.days)}</span></li>`).join('')}</ul>` : empty('No birthdays or anniversaries in the next month.')}
+          ${upcoming.length ? `<ul class="list">${upcoming.map(u => {
+            // A calendar event with nobody from Circle gets a calendar icon and its title instead of a name.
+            const who = u.cal ? (u.people.some(getPerson) ? peopleLinks(u.people) : '') : personLink(u.p);
+            const icon = u.p ? avatar(u.p) : '<div class="avatar" style="--h:210" aria-hidden="true">📅</div>';
+            return `<li>${icon}<div class="grow">${who}<div class="small ${who ? 'muted' : ''}">${u.label}</div></div><span class="pill ${u.days <= 7 ? 'accent' : ''}">${inDays(u.days)}</span></li>`;
+          }).join('')}</ul>${moreCal ? `<p class="small muted" style="margin:8px 0 0">and ${moreCal} more calendar event${moreCal === 1 ? '' : 's'}</p>` : ''}` : empty('No birthdays, anniversaries or calendar events in the next month.')}
         </section>
       </div>
       <div class="stack">
@@ -2358,17 +2380,26 @@ document.addEventListener('click', async e => {
 let agenda = []; // today's meetings: { event_key, start_at, end_at, title, person_ids, attendee_count }
 async function loadAgenda() {
   if (!sync.user) return;
-  const start = new Date(); start.setHours(0, 0, 0, 0);
-  const end = new Date(start); end.setDate(end.getDate() + 1);
-  const { data: rows, error } = await sync.client.from('circle_agenda').select('event_key, start_at, end_at, title, person_ids, attendee_count')
+  // From the start of today (a few hours earlier, so all-day events dated today are
+  // included) to a month ahead: today's meetings for the Today card, the rest for Coming up.
+  const start = new Date(); start.setHours(0, 0, 0, 0); start.setHours(-14);
+  const end = new Date(); end.setDate(end.getDate() + REMIND_DAYS + 1);
+  const { data: rows, error } = await sync.client.from('circle_agenda')
+    .select('event_key, start_at, end_at, title, person_ids, attendee_count, all_day, start_date, calendar_label')
     .gte('start_at', start.toISOString()).lt('start_at', end.toISOString()).order('start_at');
   if (error) return; // not set up yet
   const before = canon(agenda);
   agenda = rows || [];
   if (canon(agenda) !== before) render();
 }
+// The local calendar date an agenda event falls on ("YYYY-MM-DD").
+const eventDate = m => m.all_day && m.start_date ? m.start_date : (() => {
+  const d = new Date(m.start_at);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+})();
 function todayCard() {
-  const meetings = agenda.map(m => ({ ...m, people: m.person_ids.map(getPerson).filter(Boolean) })).filter(m => m.people.length);
+  const meetings = agenda.filter(m => !m.all_day && eventDate(m) === todayStr())
+    .map(m => ({ ...m, people: m.person_ids.map(getPerson).filter(Boolean) })).filter(m => m.people.length);
   if (!meetings.length) return '';
   const now = Date.now();
   const rows = meetings.map(m => {
@@ -2535,7 +2566,7 @@ $('#ntCalSave').addEventListener('click', async () => {
     const { data, error } = await sync.client.functions.invoke('notify', { body: { action: 'save_calendar', url, label } });
     if (error) { toast(await fnError(error)); return; }
     $('#ntCalUrl').value = ''; $('#ntCalLabel').value = '';
-    toast(`${data.label} connected. ${data.meetings} meeting${data.meetings === 1 ? '' : 's'} with your people in the next two days.`);
+    toast(`${data.label} connected: ${data.events ?? 0} event${data.events === 1 ? '' : 's'} in the next month.`);
     await loadCalendars();
     loadAgenda();
   } finally { btn.disabled = false; btn.textContent = 'Connect'; }
