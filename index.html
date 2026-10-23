@@ -2180,7 +2180,7 @@ function queueNote(text, source) {
 function quickNoteCard() {
   if (!syncEnabled) return '';
   return `<section class="card quick-note" style="margin-bottom:16px"><h2>Quick note</h2>
-    <textarea id="quickNote" aria-label="Quick note" placeholder="Who did you talk to, and what's going on? For example: Spoke with Tiz, he's going through a hard time this week. Follow up Sunday.">${esc(ui.quickDraft)}</textarea>
+    <textarea id="quickNote" aria-label="Quick note" placeholder="Who did you talk to, and what's going on? Add when to follow up, if you'd like.">${esc(ui.quickDraft)}</textarea>
     <div class="row"><span class="hint">On iPhone, tap the microphone on the keyboard to talk instead of type. Notes go to your Inbox for review.</span>
       <button class="btn primary" data-act="sendQuickNote">Add to Inbox</button></div>
   </section>`;
