@@ -108,7 +108,7 @@ function meetingsFrom(ics: string, doc: Doc, selfEmail: string, from: Date, to: 
       status: String(a.getParameter("partstat") ?? "").toUpperCase(),
     }));
     if (attendees.some((a) => a.email === self && a.status === "DECLINED")) return;
-    seen?.push({ title: e.summary || "(no title)", start: start.toJSDate() });
+    if (!isNaN(+start.toJSDate())) seen?.push({ title: e.summary || "(no title)", start: start.toJSDate() });
     const ids = new Set<string>();
     for (const a of attendees) if (a.email !== self && byEmail.has(a.email)) ids.add(byEmail.get(a.email)!);
     const text = [e.summary ?? "", ...attendees.map((a) => a.name)].join(" | ");
@@ -122,6 +122,7 @@ function meetingsFrom(ics: string, doc: Doc, selfEmail: string, from: Date, to: 
     }
     if (!ids.size) return;
     const startJs = start.toJSDate(), endJs = end.toJSDate();
+    if (isNaN(+startJs) || isNaN(+endJs)) return; // a date the feed doesn't spell out properly
     out.push({
       key: `${e.uid}|${startJs.toISOString()}`, start: startJs, end: endJs, title: e.summary || "Meeting", personIds: [...ids],
       attendees: Math.max(attendees.filter((a) => a.status !== "DECLINED").length, ids.size + 1),
@@ -145,7 +146,9 @@ function meetingsFrom(ics: string, doc: Doc, selfEmail: string, from: Date, to: 
 }
 
 async function fetchCalendar(url: string) {
-  const res = await fetch(url, { signal: AbortSignal.timeout(20000), headers: { Accept: "text/calendar" } });
+  // Like a calendar app: say who's asking and accept any format (some servers refuse otherwise).
+  const res = await fetch(url, { signal: AbortSignal.timeout(20000), redirect: "follow",
+    headers: { Accept: "text/calendar, */*;q=0.8", "User-Agent": "Circle/1.0 (calendar reader; +https://michaelmcneil-lab.github.io/circle/)" } });
   if (!res.ok) throw new Error(res.status === 404 ? "Google says this link no longer works. It may have been reset." : `the calendar couldn't be read (HTTP ${res.status})`);
   const text = await res.text();
   if (!text.includes("BEGIN:VCALENDAR")) throw new Error("that link isn't a calendar feed. Use the 'Secret address in iCal format'.");
@@ -304,7 +307,17 @@ async function settingsFor(userId: string): Promise<Settings> {
   return created;
 }
 
+// Any unexpected failure still answers with JSON, so the app can show what went wrong.
 Deno.serve(async (req) => {
+  try {
+    return await handle(req);
+  } catch (err) {
+    console.error("notify failed", err);
+    return json({ error: `Something went wrong on Circle's server: ${err instanceof Error ? err.message : String(err)}`.slice(0, 400) }, 500);
+  }
+});
+
+async function handle(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json({ error: "Use POST" }, 405);
 
@@ -401,4 +414,4 @@ Deno.serve(async (req) => {
   }
   if (body.action === "refresh") return json({ ok: true, ...(await runUser(await settingsFor(user.id), true)) });
   return json({ error: "Unknown action" }, 400);
-});
+}
