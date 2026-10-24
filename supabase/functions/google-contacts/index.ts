@@ -14,6 +14,7 @@ import { createClient } from "npm:@supabase/supabase-js@2.117.3";
 import * as R from "../_shared/google-sync.ts";
 import type { Doc } from "../_shared/circle.ts";
 import { type Google, type Link, runSync, show, type Store } from "./sync.ts";
+import { applyEvents, eventsFrom, type Message } from "../_shared/email-activity.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -25,6 +26,10 @@ const APP_URL = "https://michaelmcneil-lab.github.io/circle/";
 const REDIRECT_URI = `${SUPABASE_URL}/functions/v1/google-contacts`;
 const PEOPLE_API = "https://people.googleapis.com/v1";
 const SCOPES = "openid email https://www.googleapis.com/auth/contacts";
+// Email activity: headers only (who, when, subject). This permission can't read message bodies.
+const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.metadata";
+const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
+const EMAIL_PER_RUN = 150; // messages read per run; the rest wait for the next one
 const PHOTO_BUCKET = "photos";
 const LOCK_SECONDS = 140; // one run at a time per person, so nothing is created twice
 
@@ -136,7 +141,10 @@ function supabaseStore(userId: string): Store {
   };
 }
 
-type Account = { user_id: string; refresh_token: string | null; google_email: string | null; mode: "off" | "all"; last_sync_at: string | null; last_error: string | null; last_result: Any };
+type Account = {
+  user_id: string; refresh_token: string | null; google_email: string | null; mode: "off" | "all"; last_sync_at: string | null; last_error: string | null; last_result: Any;
+  scopes: string | null; gmail_on: boolean; gmail_history_id: string | null; gmail_checked_at: string | null; gmail_error: string | null; gmail_last: Any;
+};
 async function account(userId: string): Promise<Account | null> {
   const { data } = await admin.from("circle_google").select("*").eq("user_id", userId).maybeSingle();
   return data;
@@ -176,6 +184,7 @@ async function status(userId: string) {
   const name = (id: string) => (row?.data?.people ?? []).find((p: Any) => p.id === id)?.name ?? "Someone";
   return {
     connected: !!acct.refresh_token, email: acct.google_email, mode: acct.mode, lastSyncAt: acct.last_sync_at, lastError: acct.last_error, last: acct.last_result,
+    emailActivity: { on: !!acct.gmail_on, allowed: (acct.scopes ?? "").includes(GMAIL_SCOPE), checkedAt: acct.gmail_checked_at, error: acct.gmail_error, last: acct.gmail_last },
     linked: (links ?? []).filter((l) => l.status === "linked").length,
     excluded: (links ?? []).filter((l) => l.status === "excluded").map((l) => ({ personId: l.person_id, name: name(l.person_id) })),
     conflicts: (links ?? []).flatMap((l) => (l.conflicts ?? []).map((c: R.Conflict) => ({ personId: l.person_id, name: name(l.person_id), group: c.group, circle: show(c.group, c.circle), google: show(c.group, c.google) }))),
@@ -184,20 +193,23 @@ async function status(userId: string) {
 }
 
 // ---------- Google sign-in ----------
-async function startConnect(userId: string) {
+// withEmail: also ask for Gmail headers, and turn email activity on once Google says yes.
+async function startConnect(userId: string, withEmail = false) {
   if (!CLIENT_ID || !CLIENT_SECRET) throw new Error("Google isn't set up yet: add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Supabase → Edge Functions → Secrets.");
   const state = crypto.randomUUID();
   await admin.from("circle_google_oauth").delete().lt("created_at", new Date(Date.now() - 3600_000).toISOString());
-  const { error } = await admin.from("circle_google_oauth").insert({ state, user_id: userId });
+  const { error } = await admin.from("circle_google_oauth").insert({ state, user_id: userId, enable_email: withEmail });
   if (error) throw new Error(`Couldn't start Google sign-in: ${error.message}`);
-  const q = new URLSearchParams({ client_id: CLIENT_ID, redirect_uri: REDIRECT_URI, response_type: "code", scope: SCOPES, access_type: "offline", prompt: "consent", state, include_granted_scopes: "true" });
+  const acct = await account(userId);
+  const email = withEmail || (acct?.scopes ?? "").includes(GMAIL_SCOPE);
+  const q = new URLSearchParams({ client_id: CLIENT_ID, redirect_uri: REDIRECT_URI, response_type: "code", scope: email ? `${SCOPES} ${GMAIL_SCOPE}` : SCOPES, access_type: "offline", prompt: "consent", state, include_granted_scopes: "true" });
   return `https://accounts.google.com/o/oauth2/v2/auth?${q}`;
 }
 
 const back = (q: Record<string, string>) => Response.redirect(`${APP_URL}?${new URLSearchParams(q)}`, 302);
 async function finishConnect(url: URL): Promise<Response> {
   const state = url.searchParams.get("state") ?? "";
-  const { data: pending } = await admin.from("circle_google_oauth").select("user_id, created_at").eq("state", state).maybeSingle();
+  const { data: pending } = await admin.from("circle_google_oauth").select("user_id, created_at, enable_email").eq("state", state).maybeSingle();
   if (state) await admin.from("circle_google_oauth").delete().eq("state", state);
   if (!pending || Date.now() - Date.parse(pending.created_at) > 15 * 60_000) return back({ google: "error", why: "That sign-in link expired. Try Connect Google again." });
   if (url.searchParams.get("error")) return back({ google: "error", why: "Google sign-in was cancelled." });
@@ -213,9 +225,99 @@ async function finishConnect(url: URL): Promise<Response> {
   const before = await account(pending.user_id);
   // A different Google account: its contacts aren't the ones linked before.
   if (before?.google_email && email && before.google_email !== email) await admin.from("circle_google_links").delete().eq("user_id", pending.user_id);
-  const { error } = await admin.from("circle_google").upsert({ user_id: pending.user_id, refresh_token: tok.refresh_token, google_email: email || before?.google_email, last_error: null, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+  const scopes = String(tok.scope ?? url.searchParams.get("scope") ?? "");
+  const { error } = await admin.from("circle_google").upsert({ user_id: pending.user_id, refresh_token: tok.refresh_token, google_email: email || before?.google_email, scopes, last_error: null, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
   if (error) return back({ google: "error", why: `Couldn't save the connection: ${error.message}` });
+  if (pending.enable_email) {
+    if (!scopes.includes(GMAIL_SCOPE)) return back({ google: "error", why: "Email activity needs permission to see your email headers. Try again and tick that box." });
+    await startEmail(pending.user_id, tok.access_token);
+    return back({ google: "email" });
+  }
   return back({ google: "connected" });
+}
+
+// ---------- Email activity ----------
+// Gmail keeps a numbered history of changes. Circle remembers where it read up to
+// (gmail_history_id) and each run reads only the messages added since, so nothing
+// is counted twice and nothing from before email activity was turned on is added.
+async function gmail(token: string, path: string) {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`${GMAIL_API}/${path}`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(20000) });
+    if (res.ok) return await res.json();
+    if ((res.status === 429 || res.status >= 500) && attempt < 3) { await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt)); continue; }
+    const err = await res.json().catch(() => ({}));
+    throw Object.assign(new Error(`Gmail said: ${err.error?.message ?? res.status}`), { status: res.status });
+  }
+}
+
+// Turns email activity on, starting from now.
+async function startEmail(userId: string, token: string) {
+  const profile = await gmail(token, "profile");
+  await admin.from("circle_google").update({ gmail_on: true, gmail_history_id: String(profile.historyId), gmail_error: null, gmail_checked_at: new Date().toISOString() }).eq("user_id", userId);
+}
+
+async function emailUser(userId: string): Promise<{ logged: number; read: number; busy?: boolean }> {
+  const acct = await account(userId);
+  if (!acct?.refresh_token || !acct.gmail_on) return { logged: 0, read: 0 };
+  const now = new Date();
+  const { data: got } = await admin.from("circle_google").update({ running_until: new Date(+now + LOCK_SECONDS * 1000).toISOString() })
+    .eq("user_id", userId).or(`running_until.is.null,running_until.lt.${now.toISOString()}`).select("user_id");
+  if (!got?.length) return { logged: 0, read: 0, busy: true };
+  try {
+    const token = await accessToken(acct.refresh_token);
+    if (!acct.gmail_history_id) { await startEmail(userId, token); return { logged: 0, read: 0 }; }
+    // The message ids added since last time, oldest first, a batch per run.
+    const ids: string[] = [];
+    let upTo = acct.gmail_history_id, page = "", full = false;
+    try {
+      do {
+        const r = await gmail(token, `history?startHistoryId=${acct.gmail_history_id}&historyTypes=messageAdded&maxResults=500${page ? `&pageToken=${page}` : ""}`);
+        for (const h of r.history ?? []) {
+          for (const m of h.messagesAdded ?? []) if (!ids.includes(m.message.id)) ids.push(m.message.id);
+          upTo = String(h.id);
+          if (ids.length >= EMAIL_PER_RUN) { full = true; break; }
+        }
+        if (!full) upTo = String(r.historyId ?? upTo);
+        page = full ? "" : r.nextPageToken ?? "";
+      } while (page);
+    } catch (err) {
+      // Gmail forgets history after about a week; start again from now.
+      if ((err as { status?: number }).status === 404) {
+        await startEmail(userId, token);
+        await admin.from("circle_google").update({ gmail_error: "Circle couldn't check email for a while, so some emails may be missing." }).eq("user_id", userId);
+        return { logged: 0, read: 0 };
+      }
+      throw err;
+    }
+    const messages: Message[] = [];
+    for (const id of ids) {
+      try {
+        messages.push(await gmail(token, `messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Bcc&metadataHeaders=Subject&metadataHeaders=List-Id&metadataHeaders=List-Unsubscribe&metadataHeaders=Precedence`));
+      } catch (err) {
+        if ((err as { status?: number }).status !== 404) throw err; // deleted since: skip it
+      }
+    }
+    let logged = 0;
+    if (messages.length) {
+      const store = supabaseStore(userId);
+      const loaded = await store.loadDoc();
+      if (loaded) {
+        const { data: s } = await admin.from("circle_settings").select("time_zone").eq("user_id", userId).maybeSingle();
+        const events = eventsFrom(messages, loaded.doc.people ?? [], acct.google_email ?? "", s?.time_zone || "America/Los_Angeles");
+        logged = applyEvents(loaded.doc, events);
+        // Saved from a device mid-run: read the same messages again next time.
+        if (logged && !(await store.saveDoc(loaded.doc, loaded.rev))) return { logged: 0, read: 0, busy: true };
+      }
+    }
+    await admin.from("circle_google").update({ gmail_history_id: upTo, gmail_checked_at: new Date().toISOString(), gmail_error: null,
+      gmail_last: { at: new Date().toISOString(), read: messages.length, logged } }).eq("user_id", userId);
+    return { logged, read: messages.length };
+  } catch (err) {
+    await admin.from("circle_google").update({ gmail_error: msg(err), ...(err instanceof NeedsReconnect ? { refresh_token: null } : {}) }).eq("user_id", userId);
+    throw err;
+  } finally {
+    await admin.from("circle_google").update({ running_until: null }).eq("user_id", userId);
+  }
 }
 
 // ---------- Requests ----------
@@ -234,13 +336,21 @@ async function handle(req: Request): Promise<Response> {
   if (req.method === "GET" && (url.searchParams.has("state") || url.searchParams.has("error"))) return await finishConnect(url);
   if (req.method !== "POST") return json({ error: "Use POST" }, 405);
 
-  // The schedule: everyone with sync turned on.
+  // The schedule: everyone with contacts sync or email activity turned on.
   if (CRON_SECRET && req.headers.get("x-cron-secret") === CRON_SECRET) {
-    const { data: all } = await admin.from("circle_google").select("user_id").eq("mode", "all").not("refresh_token", "is", null);
+    const { data: all } = await admin.from("circle_google").select("user_id, mode, gmail_on").or("mode.eq.all,gmail_on.eq.true").not("refresh_token", "is", null);
     const results = [];
     for (const a of all ?? []) {
-      try { const r = await syncUser(a.user_id, { apply: true }); results.push({ user: a.user_id.slice(0, 8), changes: r.changes.length, busy: !!r.busy }); }
-      catch (err) { console.error("sync failed", a.user_id, err); }
+      const result: Record<string, unknown> = { user: a.user_id.slice(0, 8) };
+      if (a.mode === "all") {
+        try { const r = await syncUser(a.user_id, { apply: true }); Object.assign(result, { changes: r.changes.length, busy: !!r.busy }); }
+        catch (err) { console.error("sync failed", a.user_id, err); }
+      }
+      if (a.gmail_on) {
+        try { result.email = await emailUser(a.user_id); }
+        catch (err) { console.error("email activity failed", a.user_id, err); }
+      }
+      results.push(result);
     }
     return json({ ok: true, results });
   }
@@ -318,6 +428,19 @@ async function handle(req: Request): Promise<Response> {
       }
       return json({ ok: true });
     }
+    case "email_on": {
+      // Already allowed: start now. Otherwise Google asks for the extra permission first.
+      const acct = await account(uid);
+      if (!acct?.refresh_token) return json({ error: "Connect Google first." }, 400);
+      if (!(acct.scopes ?? "").includes(GMAIL_SCOPE)) return json({ url: await startConnect(uid, true) });
+      await startEmail(uid, await accessToken(acct.refresh_token));
+      return json({ ok: true });
+    }
+    case "email_off": {
+      await admin.from("circle_google").update({ gmail_on: false, gmail_history_id: null }).eq("user_id", uid);
+      return json({ ok: true });
+    }
+    case "email_check": return json(await emailUser(uid));
     case "disconnect": {
       const acct = await account(uid);
       if (acct?.refresh_token) await fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(acct.refresh_token)}`, { method: "POST" }).catch(() => {});

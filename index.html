@@ -608,6 +608,13 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
         <button type="button" class="btn" id="gcPreview2">Preview</button>
         <button type="button" class="btn ghost" id="gcPause">Pause syncing</button></div>
     </section>
+    <section class="stack" style="gap:8px" id="gcEmailBox" hidden>
+      <strong>Email activity</strong>
+      <span class="hint">Adds an Email entry to someone's timeline when you email them, or they email you, with the subject as the note. One entry per person per day. Skips mailing lists and emails to more than 5 people. Circle sees only who, when and the subject, never what the email says.</span>
+      <p class="small" style="margin:0" id="gcEmailStatus"></p>
+      <div class="p-actions"><button type="button" class="btn" id="gcEmailToggle">Turn on</button>
+        <button type="button" class="btn ghost" id="gcEmailCheck" hidden>Check now</button></div>
+    </section>
     <section class="stack" style="gap:8px" id="gcConflictsBox" hidden>
       <strong>Different in Circle and Google</strong>
       <span class="hint">These were different before syncing started. Pick which to keep; the other side is updated to match.</span>
@@ -1050,9 +1057,10 @@ function onSignedIn(user) {
   render();
   syncNow();
   if (ui.googleReturn) {
-    const { ok, why } = ui.googleReturn;
+    const { kind, why } = ui.googleReturn;
     ui.googleReturn = null;
-    toast(ok ? 'Google is connected. Start with Preview.' : `Google wasn't connected: ${why}`);
+    toast(kind === 'email' ? 'Email activity is on. Emails from now on will appear within about 5 minutes.'
+      : kind === 'connected' ? 'Google is connected. Start with Preview.' : `Google wasn't connected: ${why}`);
     openGoogle();
   }
 }
@@ -2742,6 +2750,14 @@ async function loadGoogle() {
   $('#gcStatus').innerHTML = !st.email ? 'Not connected yet. After you connect, Preview shows what would change before anything does.'
     : `${connected ? 'Connected' : 'Disconnected'} as <strong>${esc(st.email)}</strong>. ${on ? 'Syncing every 5 minutes.' : connected ? 'Not syncing yet.' : ''} ${st.linked ? `${st.linked} people linked.` : ''}${esc(last)}`
       + (st.lastError ? `<br>⚠ ${esc(st.lastError)}` : '');
+  const ea = st.emailActivity || {};
+  $('#gcEmailBox').hidden = !connected;
+  $('#gcEmailToggle').textContent = ea.on ? 'Turn off' : 'Turn on';
+  $('#gcEmailToggle').classList.toggle('primary', !ea.on);
+  $('#gcEmailCheck').hidden = !ea.on;
+  $('#gcEmailStatus').innerHTML = !ea.on ? 'Off.' + (ea.allowed ? '' : ' Turning it on asks Google for permission to see your email headers.')
+    : `On. ${ea.last ? `Last checked ${gcWhen(ea.last.at)}: ${ea.last.logged ? `${ea.last.logged} ${ea.last.logged === 1 ? 'entry' : 'entries'} added or updated` : 'nothing new with your people'}.` : 'Emails from now on will appear within about 5 minutes.'}`
+      + (ea.error ? `<br>⚠ ${esc(ea.error)}` : '');
   $('#gcPerson').innerHTML = [...data.people].sort((a, b) => a.name.localeCompare(b.name)).map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
   if (ui.gcPerson) $('#gcPerson').value = ui.gcPerson;
   const conflicts = st.conflicts || [], flags = st.flags || [], excluded = st.excluded || [];
@@ -2779,7 +2795,8 @@ function showGoogleResult(r, title) {
 async function gcBusy(btn, label, fn) {
   const was = btn.textContent;
   btn.disabled = true; btn.textContent = label;
-  try { await fn(); } catch (err) { toast(err.message); } finally { btn.disabled = false; btn.textContent = was; }
+  // The old label comes back only if nothing relabelled the button meanwhile (a refreshed screen).
+  try { await fn(); } catch (err) { toast(err.message); } finally { btn.disabled = false; if (btn.textContent === label) btn.textContent = was; }
 }
 const afterSync = async () => { await loadGoogle(); syncNow(); };
 $('#gcConnect').addEventListener('click', () => gcBusy($('#gcConnect'), 'Opening Google…', async () => { location.href = (await gcCall('connect')).url; }));
@@ -2808,6 +2825,21 @@ $('#gcSyncNow').addEventListener('click', () => gcBusy($('#gcSyncNow'), 'Syncing
   const r = await gcCall('sync');
   showGoogleResult(r, ch => ch.length ? `Synced: ${ch.length} ${ch.length === 1 ? 'person' : 'people'} updated.` : 'Circle and Google already match.');
   await afterSync();
+}));
+$('#gcEmailToggle').addEventListener('click', () => {
+  const on = $('#gcEmailToggle').textContent === 'Turn off';
+  if (on && !confirm('Turn off email activity? Entries already added stay; no new ones are added.')) return;
+  gcBusy($('#gcEmailToggle'), on ? 'Turning off…' : 'Turning on…', async () => {
+    const r = await gcCall(on ? 'email_off' : 'email_on');
+    if (r.url) { location.href = r.url; return; } // Google asks for the extra permission first
+    await loadGoogle();
+    toast(on ? 'Email activity is off.' : 'Email activity is on. Emails from now on will appear within about 5 minutes.');
+  });
+});
+$('#gcEmailCheck').addEventListener('click', () => gcBusy($('#gcEmailCheck'), 'Checking…', async () => {
+  const r = await gcCall('email_check');
+  toast(r.busy ? 'Circle was busy. Try again in a moment.' : r.logged ? `${r.logged} ${r.logged === 1 ? 'entry' : 'entries'} added or updated.` : 'Nothing new with your people.');
+  await loadGoogle(); syncNow();
 }));
 $('#gcPause').addEventListener('click', () => gcBusy($('#gcPause'), 'Pausing…', async () => { await gcCall('pause'); await loadGoogle(); toast('Sync paused. Nothing changes until you turn it on again.'); }));
 $('#gcDisconnect').addEventListener('click', () => {
@@ -3084,7 +3116,7 @@ document.addEventListener('change', e => {
   if (params.has('note')) { ui.quickDraft = params.get('note'); ui.focusNote = true; }
   if (params.has('note') || params.get('view') === 'today') ui.tab = 'home';
   // Back from Google sign-in: reopen the sync screen once signed in.
-  if (params.has('google')) ui.googleReturn = { ok: params.get('google') === 'connected', why: params.get('why') || '' };
+  if (params.has('google')) ui.googleReturn = { kind: params.get('google'), why: params.get('why') || '' };
   if (params.toString()) history.replaceState(null, '', location.pathname);
 }
 loadLocal();

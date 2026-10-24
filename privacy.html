@@ -29,7 +29,7 @@ a { color: var(--accent); }
 <main class="card">
   <div class="brand"><span class="brand-dot"></span>Circle</div>
   <h1>Privacy policy</h1>
-  <p class="muted">Last updated October 23, 2026</p>
+  <p class="muted">Last updated October 24, 2026</p>
 
   <p>Circle is a personal app for keeping up with the people in its owner's life. It is used only by its owner, under their own accounts. It is not offered to the public and has no other users.</p>
 
@@ -45,10 +45,19 @@ a { color: var(--accent); }
     <li>The Google sign-in is stored only on Circle's server, never on a device.</li>
   </ul>
 
+  <h2>Gmail</h2>
+  <p>If the owner turns on email activity, Circle reads the headers of new emails in their Gmail account: who sent them, who they went to, the date and the subject. It cannot read what an email says. It uses these only to add an "Email" entry, with the subject, to the timeline of people already in Circle.</p>
+  <ul>
+    <li>Emails with anyone not in Circle, mailing lists, and emails to more than five people are ignored and not stored.</li>
+    <li>Gmail data is not sold, used for advertising or shared with anyone. It is not sent to any AI model, except that the owner's own Claude connector can read a person's Circle timeline, these entries included, when the owner asks it about that person.</li>
+    <li>Circle's use of Gmail data follows the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including its Limited Use requirements.</li>
+    <li>Turning email activity off in Circle stops it at once; removing Circle's access at <a href="https://myaccount.google.com/connections">myaccount.google.com/connections</a> ends it entirely.</li>
+  </ul>
+
   <h2>Other services</h2>
   <ul>
     <li><strong>Supabase</strong> hosts Circle's data and server functions.</li>
-    <li><strong>Anthropic (Claude)</strong> sorts notes the owner chooses to send to the Inbox into suggested updates. To match a note to the right person, it is given the names, nicknames and companies of the people in Circle, some of which may have come from Google Contacts. It is not given phone numbers, email addresses, street addresses, birthdays or photos. Anthropic does not use this data to train its models.</li>
+    <li><strong>Anthropic (Claude)</strong> sorts notes the owner chooses to send to the Inbox into suggested updates. To match a note to the right person, it is given the names, nicknames and companies of the people in Circle, some of which may have come from Google Contacts. It is not given phone numbers, email addresses, street addresses, birthdays, photos or anything from Gmail. Anthropic does not use this data to train its models.</li>
     <li><strong>Calendars</strong> the owner connects are read to show upcoming meetings.</li>
   </ul>
 
