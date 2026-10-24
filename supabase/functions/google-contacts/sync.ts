@@ -54,6 +54,7 @@ export type Options = {
   personIds?: string[]; // limit the run to these people (the one-person test)
   maxWrites?: number; // Google updates per run; the rest wait for the next run
   maxCreates?: number; // new Google contacts per run
+  maxPhotoPulls?: number; // photos copied from Google per run
 };
 
 export type Change = {
@@ -92,6 +93,7 @@ const b64 = (bytes: Uint8Array) => { let s = ""; for (let i = 0; i < bytes.lengt
 type Work = {
   p: Any; link: Link | null; g: Any | null; create: boolean;
   plan: R.Plan; photo: R.PhotoMove;
+  photoLater?: boolean; // a photo from Google that waits for a later run
 };
 
 export async function runSync(store: Store, google: Google, opt: Options): Promise<Result> {
@@ -158,16 +160,27 @@ export async function runSync(store: Store, google: Google, opt: Options): Promi
   const linked = work.filter((w) => !w.create).length;
   if (!opt.apply) return { changes, linked, flags, waiting: 0 };
 
-  // 1. Circle's side, saved in one go.
-  let circleChanged = false;
+  // 1. Circle's side, saved in one go. Photos from Google come a batch per run (each is
+  // a download and an upload), and one that fails is left for a later run: neither
+  // may stop everyone else's changes from being saved.
+  let circleChanged = false, pulls = 0, waiting = 0;
+  const maxPulls = opt.maxPhotoPulls ?? 20;
   for (const w of work) {
     if (Object.keys(w.plan.toCircle).length) { R.applyToCircle(w.p, w.plan.toCircle); circleChanged = true; }
     if (w.photo === "pull") {
-      const { bytes, type } = await google.fetchPhoto(R.googlePhoto(w.g)!);
-      const path = photoPath(store.userId, w.p.id);
-      await store.photoPut(path, bytes, type);
-      w.p.photo = { path, v: Date.now() };
-      circleChanged = true;
+      if (pulls >= maxPulls) { w.photoLater = true; waiting++; continue; }
+      try {
+        const { bytes, type } = await google.fetchPhoto(R.googlePhoto(w.g)!);
+        const path = photoPath(store.userId, w.p.id);
+        await store.photoPut(path, bytes, type);
+        w.p.photo = { path, v: Date.now() };
+        circleChanged = true;
+        pulls++;
+      } catch (err) {
+        w.photoLater = true;
+        const change = changes.find((c) => c.personId === w.p.id);
+        if (change) change.error = `Photo not copied from Google: ${err instanceof Error ? err.message : err}`;
+      }
     } else if (w.photo === "remove_circle" && w.p.photo) {
       await store.photoRemove(w.p.photo.path);
       delete w.p.photo;
@@ -177,7 +190,7 @@ export async function runSync(store: Store, google: Google, opt: Options): Promi
   if (circleChanged && !(await store.saveDoc(doc, rev))) return { changes, linked, flags, waiting: 0, busy: true };
 
   // 2. Google's side, one person at a time.
-  let writes = 0, creates = 0, waiting = 0;
+  let writes = 0, creates = 0;
   const max = opt.maxWrites ?? 40, maxCreates = opt.maxCreates ?? 10;
   for (const w of work) {
     const needs = w.create || Object.keys(w.plan.toGoogle).length > 0 || w.photo === "push" || w.photo === "remove_google";
@@ -208,9 +221,12 @@ export async function runSync(store: Store, google: Google, opt: Options): Promi
       link.snapshot = w.plan.snapshot;
       link.conflicts = w.plan.conflicts;
       link.etag = g?.etag ?? link.etag;
-      link.photo_synced = true;
-      link.circle_photo_v = R.circlePhoto(w.p);
-      link.google_photo_url = googleUrl;
+      // A photo still to come keeps the last agreed photo state, so the next run tries again.
+      if (!w.photoLater) {
+        link.photo_synced = true;
+        link.circle_photo_v = R.circlePhoto(w.p);
+        link.google_photo_url = googleUrl;
+      }
       if (R.canon(link) !== before) await store.saveLink(link); // most runs change nothing
     } catch (err) {
       if (change) change.error = err instanceof Error ? err.message : String(err);

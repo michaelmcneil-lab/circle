@@ -171,6 +171,33 @@ Deno.test("a save from a device mid-run stops before touching Google", async () 
   eq(again.busy, undefined); eq(g.log.length, 2);
 });
 
+Deno.test("a photo that can't be saved is retried later and doesn't stop the run", async () => {
+  const { s, store, g } = setup();
+  g.edit("people/1", (c) => c.photos = [{ url: "https://photo/anna", metadata: { primary: true } }]);
+  const put = store.photoPut;
+  store.photoPut = () => Promise.reject(new Error("mime type image/png is not supported"));
+  const r = await runSync(store, g.api, { apply: true });
+  eq(r.changes.find((c) => c.personId === "a")!.error, "Photo not copied from Google: mime type image/png is not supported");
+  eq(s.doc.people.find((p: Any) => p.id === "b").phones.length, 2, "everyone else's changes were still saved");
+  eq(s.doc.people.find((p: Any) => p.id === "a").photo, undefined);
+  store.photoPut = put;
+  await runSync(store, g.api, { apply: true });
+  eq(new TextDecoder().decode(s.photos.get("u1/a.jpg")), "https://photo/anna", "next run copies it");
+});
+
+Deno.test("photos from Google come a batch per run", async () => {
+  const people = Array.from({ length: 5 }, (_, i) => person(`p${i}`, `P${i}`, "X"));
+  const { s, store } = memoryStore(people);
+  const g = fakeGoogle(people.map((_, i) => contact(`people/${i}`, `P${i}`, "X", { photos: [{ url: `https://photo/${i}`, metadata: { primary: true } }] })));
+  let r = await runSync(store, g.api, { apply: true, maxPhotoPulls: 2 });
+  eq([s.photos.size, r.waiting], [2, 3]);
+  r = await runSync(store, g.api, { apply: true, maxPhotoPulls: 2 });
+  r = await runSync(store, g.api, { apply: true, maxPhotoPulls: 2 });
+  eq([s.photos.size, r.waiting], [5, 0]);
+  eq(s.doc.people.every((p: Any) => p.photo), true);
+  eq(g.log, [], "nothing sent back to Google");
+});
+
 Deno.test("new contacts go a few at a time", async () => {
   const people = Array.from({ length: 25 }, (_, i) => person(`p${i}`, `P${i}`, "X"));
   const { store } = memoryStore(people);

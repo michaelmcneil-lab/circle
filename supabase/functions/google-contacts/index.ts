@@ -126,8 +126,10 @@ function supabaseStore(userId: string): Store {
       const { data } = await admin.storage.from(PHOTO_BUCKET).download(path);
       return data ? new Uint8Array(await data.arrayBuffer()) : null;
     },
-    async photoPut(path, bytes, type) {
-      const { error } = await admin.storage.from(PHOTO_BUCKET).upload(path, bytes, { upsert: true, contentType: type });
+    async photoPut(path, bytes, _type) {
+      // The photos bucket accepts only image/jpeg. Some Google photos are PNG; they're stored
+      // under the JPEG label all the same, since browsers read the image itself to draw it.
+      const { error } = await admin.storage.from(PHOTO_BUCKET).upload(path, bytes, { upsert: true, contentType: "image/jpeg" });
       if (error) throw new Error(`Photo not saved: ${error.message}`);
     },
     async photoRemove(path) { await admin.storage.from(PHOTO_BUCKET).remove([path]); },
