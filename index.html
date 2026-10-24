@@ -247,6 +247,9 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
 .bday-row { display: grid; grid-template-columns: 1.5fr 1fr 1.2fr; gap: 6px; }
 .multi:empty { display: none; }
 .multi-row { display: grid; grid-template-columns: 118px minmax(0, 1fr) auto; gap: 6px; margin-bottom: 6px; }
+/* An address gets the full width on its own line, under its label and remove button. */
+.multi-row.wide textarea { grid-column: 1 / -1; grid-row: 2; }
+.multi-row.wide button { grid-column: 3; grid-row: 1; }
 .add-row { justify-self: start; }
 .pronouns { font-size: 15px; font-weight: 400; color: var(--ink-3); margin-left: 6px; }
 .facts dd a + a { margin-left: 10px; }
@@ -437,7 +440,8 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
       <button type="button" class="btn ghost small add-row" data-add="emails">+ Add email</button></div>
     <div class="field"><span>Profiles &amp; links</span><div class="multi" data-multi="links"></div>
       <button type="button" class="btn ghost small add-row" data-add="links">+ Add link</button></div>
-    <label class="field"><span>Address</span><textarea name="address" rows="2" style="min-height:0"></textarea></label>
+    <div class="field"><span>Address</span><div class="multi" data-multi="addresses"></div>
+      <button type="button" class="btn ghost small add-row" data-add="addresses">+ Add address</button></div>
     <label class="field"><span>Family notes</span><textarea name="family" rows="2" style="min-height:0" placeholder="Anything else about their family"></textarea>
       <span class="hint">Add partners, kids and pets with names and birthdays from the Family section on their page.</span></label>
     <label class="field"><span>Interests</span><input type="text" name="interests" placeholder="Hiking, jazz, sourdough"><span class="hint">Separate with commas</span></label>
@@ -859,6 +863,9 @@ function normalize(d) {
     if (!Array.isArray(p.phones)) p.phones = p.phone ? [{ label: 'Mobile', value: p.phone }] : [];
     if (!Array.isArray(p.emails)) p.emails = p.email ? [{ label: 'Personal', value: p.email }] : [];
     delete p.phone; delete p.email;
+    // Older data had a single address.
+    if (!Array.isArray(p.addresses)) p.addresses = p.address ? [{ label: 'Home', value: String(p.address) }] : [];
+    delete p.address;
     p.links ||= [];
     p.interests ||= []; p.tags ||= []; p.events ||= [];
     p.familyMembers ||= [];
@@ -1246,7 +1253,7 @@ $('#evForm [name=type]').innerHTML = Object.entries(EV_TYPES).map(([k, [i, l]]) 
 
 function matches(p, q) {
   if (!q) return true;
-  const hay = [p.name, p.nickname, p.company, p.jobTitle, p.address, p.notes, p.family, p.howMet, ...p.interests, ...p.tags,
+  const hay = [p.name, p.nickname, p.company, p.jobTitle, ...p.addresses.map(a => a.value), p.notes, p.family, p.howMet, ...p.interests, ...p.tags,
     ...p.phones.map(x => x.value), ...p.emails.map(x => x.value),
     ...p.familyMembers.map(m => m.name + ' ' + (m.note || '')),
     ...ixFor(p).map(i => i.summary), ...followUpsFor(p).map(f => f.text), ...p.events.map(e => e.title + ' ' + (e.notes || ''))].join(' ').toLowerCase();
@@ -1463,7 +1470,7 @@ function renderPerson(p) {
     ...p.emails.map(x => fact(`${esc(x.label)} email`, `<a href="mailto:${esc(x.value)}">${esc(x.value)}</a>`)),
     fact('Online', links),
     fact('Birthday', b ? fmtBirthday(b) : ''),
-    fact('Address', esc(p.address)),
+    ...p.addresses.map(x => fact(`${esc(x.label)} address`, esc(x.value))),
     fact('How we met', esc(p.howMet)),
     fact('Check in', p.contactEvery ? esc(CHECKIN_LABEL[p.contactEvery] || `Every ${p.contactEvery} days`) : ''),
   ].join('');
@@ -1582,25 +1589,41 @@ function renderPerson(p) {
 }
 
 // ---------- Dialogs ----------
-const TEXT_FIELDS = ['firstName', 'lastName', 'nickname', 'pronouns', 'relationship', 'company', 'jobTitle', 'howMet', 'address', 'family', 'notes'];
+const TEXT_FIELDS = ['firstName', 'lastName', 'nickname', 'pronouns', 'relationship', 'company', 'jobTitle', 'howMet', 'family', 'notes'];
 const MULTI = {
   phones: { labels: ['Mobile', 'Home', 'Work', 'Other'], type: 'tel', placeholder: 'Phone number' },
   emails: { labels: ['Personal', 'Work', 'Other'], type: 'email', placeholder: 'name@example.com' },
   links: { labels: ['LinkedIn', 'Facebook', 'Instagram', 'Website', 'Other'], type: 'text', placeholder: 'linkedin.com/in/…' },
+  // Addresses can carry a label of your own ("Summer home"), which Google keeps too.
+  addresses: { labels: ['Home', 'Work', 'Other'], type: 'textarea', placeholder: 'Street\nCity, State ZIP\nCountry', custom: true },
 };
+const CUSTOM = '__custom';
 function addRow(kind, item = {}) {
   const cfg = MULTI[kind];
   const labels = item.label && !cfg.labels.includes(item.label) ? [...cfg.labels, item.label] : cfg.labels;
   const row = document.createElement('div');
-  row.className = 'multi-row';
-  row.innerHTML = `<select aria-label="Label">${labels.map(l => `<option ${l === item.label ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
-    <input type="${cfg.type}" value="${esc(item.value || '')}" placeholder="${cfg.placeholder}" aria-label="${kind}">
+  row.className = cfg.type === 'textarea' ? 'multi-row wide' : 'multi-row';
+  const field = cfg.type === 'textarea'
+    ? `<textarea rows="3" style="min-height:0" placeholder="${esc(cfg.placeholder)}" aria-label="${kind}">${esc(item.value || '')}</textarea>`
+    : `<input type="${cfg.type}" value="${esc(item.value || '')}" placeholder="${cfg.placeholder}" aria-label="${kind}">`;
+  row.innerHTML = `<select aria-label="Label">${labels.map(l => `<option ${l === item.label ? 'selected' : ''}>${esc(l)}</option>`).join('')}${cfg.custom ? `<option value="${CUSTOM}">Custom…</option>` : ''}</select>
+    ${field}
     <button type="button" class="btn ghost small" data-remove-row aria-label="Remove">✕</button>`;
   $(`[data-multi=${kind}]`).appendChild(row);
   return row;
 }
+// Picking "Custom…" asks for the label and adds it to that row's choices.
+$('#personForm').addEventListener('change', e => {
+  const sel = e.target.closest('.multi-row select');
+  if (!sel || sel.value !== CUSTOM) return;
+  const label = prompt('Label for this address, for example "Summer home"')?.trim().slice(0, 40);
+  if (!label) { sel.selectedIndex = 0; return; }
+  if (![...sel.options].some(o => o.value === label)) sel.querySelector(`option[value="${CUSTOM}"]`).insertAdjacentHTML('beforebegin', `<option>${esc(label)}</option>`);
+  sel.value = label;
+});
 const readRows = kind => [...$(`[data-multi=${kind}]`).children]
-  .map(r => ({ label: r.querySelector('select').value, value: r.querySelector('input').value.trim() })).filter(x => x.value);
+  .map(r => ({ label: r.querySelector('select').value === CUSTOM ? 'Other' : r.querySelector('select').value, value: r.querySelector('input, textarea').value.trim() }))
+  .filter(x => x.value);
 // Pick the link label from the address, e.g. facebook.com → Facebook.
 const LINK_SITES = { 'linkedin.com': 'LinkedIn', 'facebook.com': 'Facebook', 'fb.com': 'Facebook', 'instagram.com': 'Instagram' };
 $('[data-multi=links]').addEventListener('input', e => {
@@ -1613,7 +1636,7 @@ $('[data-multi=links]').addEventListener('input', e => {
 });
 $('#personForm').addEventListener('click', e => {
   const add = e.target.closest('[data-add]');
-  if (add) addRow(add.dataset.add).querySelector('input').focus();
+  if (add) addRow(add.dataset.add).querySelector('input, textarea').focus();
   const rm = e.target.closest('[data-remove-row]');
   if (rm) rm.closest('.multi-row').remove();
 });
@@ -2015,12 +2038,13 @@ function vcardToContact(props) {
   const emails = all('EMAIL').map(p => ({
     label: label(p.types, [['work', 'Work'], ['home', 'Personal']], 'Personal'), value: unescapeV(p.value).replace(/^mailto:/i, ''),
   })).filter(x => x.value);
-  const adrProp = all('ADR').find(p => p.types.includes('home')) || one('ADR');
-  let address = '';
-  if (adrProp) {
-    const [, , street = '', city = '', region = '', postal = '', country = ''] = splitParts(adrProp.value);
-    address = [street, [city, [region, postal].filter(Boolean).join(' ')].filter(Boolean).join(', '), country].filter(Boolean).join('\n');
-  }
+  const addresses = all('ADR').map(p => {
+    const [, , street = '', city = '', region = '', postal = '', country = ''] = splitParts(p.value);
+    return {
+      label: label(p.types, [['home', 'Home'], ['work', 'Work']], 'Other'),
+      value: [street, [city, [region, postal].filter(Boolean).join(' ')].filter(Boolean).join(', '), country].filter(Boolean).join('\n'),
+    };
+  }).filter(x => x.value);
   const links = [];
   for (const p of [...all('URL'), ...all('X-SOCIALPROFILE')]) {
     const href = safeUrl(unescapeV(p.value));
@@ -2045,7 +2069,7 @@ function vcardToContact(props) {
   }
   return {
     firstName, lastName, nickname: text('NICKNAME'), company: org === firstName ? '' : org, jobTitle: text('TITLE'),
-    birthday: one('BDAY') ? vcardBirthday(one('BDAY').value) : '', phones, emails, address, links, notes: text('NOTE'), events, photo,
+    birthday: one('BDAY') ? vcardBirthday(one('BDAY').value) : '', phones, emails, addresses, links, notes: text('NOTE'), events, photo,
   };
 }
 const digitsOf = s => String(s).replace(/\D/g, '').slice(-10);
@@ -2059,7 +2083,10 @@ function findExisting(c) {
 }
 // Adds what the existing person is missing; never overwrites what's already there.
 function mergeContact(p, c) {
-  for (const k of ['nickname', 'company', 'jobTitle', 'address', 'birthday', 'notes']) if (!p[k] && c[k]) p[k] = c[k];
+  for (const k of ['nickname', 'company', 'jobTitle', 'birthday', 'notes']) if (!p[k] && c[k]) p[k] = c[k];
+  const flat = s => s.toLowerCase().replace(/\s+/g, ' ').trim();
+  const haveAddresses = new Set(p.addresses.map(x => flat(x.value)));
+  c.addresses.forEach(x => { if (!haveAddresses.has(flat(x.value))) p.addresses.push(x); });
   const haveDigits = new Set(p.phones.map(x => digitsOf(x.value)));
   c.phones.forEach(x => { if (!haveDigits.has(digitsOf(x.value))) p.phones.push(x); });
   const haveEmails = new Set(p.emails.map(x => x.value.toLowerCase()));
@@ -2102,12 +2129,12 @@ $('#impPickPhone').addEventListener('click', async () => {
     const picked = await navigator.contacts.select(['name', 'email', 'tel', 'address'].filter(x => supported.includes(x)), { multiple: true });
     const contacts = picked.map(x => {
       const parts = String(x.name?.[0] || '').trim().split(/\s+/).filter(Boolean);
-      const a = x.address?.[0];
       return {
         firstName: parts.length > 1 ? parts.slice(0, -1).join(' ') : parts[0] || '', lastName: parts.length > 1 ? parts.at(-1) : '',
         nickname: '', company: '', jobTitle: '', birthday: '', notes: '', links: [], events: [], photo: null,
         phones: (x.tel || []).map(v => ({ label: 'Mobile', value: v })), emails: (x.email || []).map(v => ({ label: 'Personal', value: v })),
-        address: a ? [(a.addressLine || []).join(' '), [a.city, [a.region, a.postalCode].filter(Boolean).join(' ')].filter(Boolean).join(', '), a.country].filter(Boolean).join('\n') : '',
+        addresses: (x.address || []).map(a => ({ label: 'Home',
+          value: [(a.addressLine || []).join(' '), [a.city, [a.region, a.postalCode].filter(Boolean).join(' ')].filter(Boolean).join(', '), a.country].filter(Boolean).join('\n') })).filter(a => a.value),
       };
     }).filter(c => c.firstName);
     if (contacts.length) showImportReview(contacts);
@@ -2693,7 +2720,7 @@ const gcCall = async (action, extra = {}) => {
   if (error) throw new Error(await fnError(error));
   return data;
 };
-const GC_GROUP = { name: 'Name', nickname: 'Nickname', org: 'Company / job', birthday: 'Birthday', address: 'Address', phones: 'Phones', emails: 'Emails' };
+const GC_GROUP = { name: 'Name', nickname: 'Nickname', org: 'Company / job', birthday: 'Birthday', addresses: 'Addresses', address: 'Address', phones: 'Phones', emails: 'Emails' };
 const gcWhen = s => s ? new Date(s).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
 async function openGoogle() {
   if (!sync.user) return toast('Sign in first.');
@@ -2889,7 +2916,7 @@ function addSample() {
   const sample = normalize({ people: [
     { id: alexId, firstName: 'Alex', lastName: 'Rivera', pronouns: 'he/him', relationship: 'Colleague', nickname: '', phone: '', email: '',
       birthday: shift(25).slice(5), company: 'Northwind', jobTitle: 'Product Manager',
-      address: '', family: '', howMet: 'Joined my team in 2023', contactEvery: 14,
+      addresses: [], family: '', howMet: 'Joined my team in 2023', contactEvery: 14,
       familyMembers: [{ rel: 'spouse', name: 'Priya' }, { rel: 'child', name: 'Sofia', birthday: shift(6, 9), note: 'Plays travel soccer' },
         { rel: 'child', name: 'Lucia', birthday: shift(-80, 6).slice(5) }],
       interests: ['Cycling', 'Ohio State football'], tags: ['Sample', 'Work'], notes: '',
@@ -2898,9 +2925,9 @@ function addSample() {
         howToShowUp: 'Ask how he\'s doing, gently. Don\'t press for details. Offer flexibility on the Q4 deadline.' }],
       interactions: [{ id: uid(), date: shift(-21), type: 'inperson', summary: '1:1. He told me his father passed away over the weekend. Taking the rest of the week off.', followUp: 'Check in when he\'s back', followUpDone: false }] },
     { id: luisId, firstName: 'Luis', lastName: 'Alvarez', pronouns: 'he/him', relationship: 'Family', birthday: shift(52, 71),
-      address: 'Tucson, AZ', interests: ['Woodworking', 'Baseball'], tags: ['Sample', 'Mom\'s side'], events: [], contactEvery: 0 },
+      addresses: [{ label: 'Home', value: 'Tucson, AZ' }], interests: ['Woodworking', 'Baseball'], tags: ['Sample', 'Mom\'s side'], events: [], contactEvery: 0 },
     { id: rosaId, firstName: 'Rosa', lastName: 'Alvarez', pronouns: 'she/her', relationship: 'Family', nickname: 'Aunt Ro', phone: '555-0142', email: '', birthday: shift(9, 68),
-      address: 'Tucson, AZ', family: 'Her daughter Carmen lives nearby in Phoenix.', howMet: '', contactEvery: 30,
+      addresses: [{ label: 'Home', value: 'Tucson, AZ' }], family: 'Her daughter Carmen lives nearby in Phoenix.', howMet: '', contactEvery: 30,
       familyMembers: [{ rel: 'grandchild', name: 'Mia', birthday: shift(19, 7), note: 'Ballet recitals; loves dinosaurs' },
         { rel: 'grandchild', name: 'Theo', birthday: shift(150, 4) }, { rel: 'pet', name: 'Churro', note: 'Chihuahua' }],
       interests: ['Gardening', 'Telenovelas', 'Baking'], tags: ['Sample', 'Mom\'s side'], notes: 'Loves lemon cake. Allergic to cats.',
@@ -2909,7 +2936,7 @@ function addSample() {
       interactions: [{ id: uid(), date: shift(-48), type: 'call', summary: 'Talked about her garden — tomatoes finally came in. Planning a trip to see Mia\'s recital.', followUp: 'Ask how the recital went', followUpDone: false }] },
     { id: devId, firstName: 'Dev', lastName: 'Patel', pronouns: 'he/him', relationship: 'Close friend', nickname: '', phone: '', email: 'dev@example.com', birthday: shift(40, 41),
       company: 'Studio X', jobTitle: 'Senior Designer', links: [{ label: 'LinkedIn', value: 'linkedin.com/in/example' }],
-      address: '', family: '', howMet: 'College roommate', contactEvery: 14,
+      addresses: [], family: '', howMet: 'College roommate', contactEvery: 14,
       familyMembers: [{ rel: 'partner', name: 'Jordan Lee' }],
       interests: ['Climbing', 'Board games', 'Indie films'], tags: ['Sample', 'College'], notes: '',
       events: [{ id: uid(), date: shift(-20), type: 'job', title: 'Started at a new design studio', notes: 'Senior role, much shorter commute.', recurring: false }],

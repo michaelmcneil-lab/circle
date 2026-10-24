@@ -75,12 +75,13 @@ export type Result = {
   busy?: boolean; // Circle was saved from a device mid-run; nothing written, try again
 };
 
-const LABEL: Record<R.Group, string> = { name: "Name", nickname: "Nickname", org: "Company / job", birthday: "Birthday", address: "Address", phones: "Phones", emails: "Emails" };
+const LABEL: Record<R.Group, string> = { name: "Name", nickname: "Nickname", org: "Company / job", birthday: "Birthday", addresses: "Addresses", phones: "Phones", emails: "Emails" };
 export function show(group: R.Group, v: Any): string {
   if (v === undefined || v === null) return "";
   if (group === "name") return [v.first, v.last].filter(Boolean).join(" ");
   if (group === "org") return [v.company, v.title].filter(Boolean).join(" · ");
   if (group === "phones" || group === "emails") return (v as R.Item[]).map((x) => `${x.value} (${x.label})`).join(", ");
+  if (group === "addresses") return (v as R.Item[]).map((x) => `${x.value.replace(/\n/g, ", ")} (${x.label})`).join("; ");
   return String(v).replace(/\n/g, ", ");
 }
 const describe = (vals: Partial<R.Values>) =>
@@ -139,7 +140,7 @@ export async function runSync(store: Store, google: Google, opt: Options): Promi
     const c = R.fromCircle(p);
     if (!g) {
       // Not in Google yet: it will be created there with everything Circle has.
-      const empty: R.Values = { name: { first: "", last: "" }, nickname: "", org: { company: "", title: "" }, birthday: "", address: "", phones: [], emails: [] };
+      const empty: R.Values = { name: { first: "", last: "" }, nickname: "", org: { company: "", title: "" }, birthday: "", addresses: [], phones: [], emails: [] };
       work.push({ p, link: null, g: null, create: true, plan: R.plan({}, c, empty, false), photo: R.circlePhoto(p) ? "push" : null });
       continue;
     }

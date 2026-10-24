@@ -6,13 +6,15 @@
 // person we remember the value both sides last agreed on (the "snapshot"). On each
 // run, per group: if only one side differs from the snapshot, that side changed and
 // wins; if both changed, the more recent edit wins. A group with no snapshot yet
-// (first sync) fills in blanks and combines phone and email lists, but never
+// (first sync) fills in blanks and combines phone, email and address lists, but never
 // overwrites a value on either side: it becomes a conflict for the user to settle.
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
-export const GROUPS = ["name", "nickname", "org", "birthday", "address", "phones", "emails"] as const;
+// "addresses" replaced a single "address" group; a link's old "address" snapshot is
+// simply ignored, so the first run after the change syncs addresses as a first sync.
+export const GROUPS = ["name", "nickname", "org", "birthday", "addresses", "phones", "emails"] as const;
 export type Group = typeof GROUPS[number];
 export type Item = { label: string; value: string };
 export type Values = {
@@ -20,7 +22,9 @@ export type Values = {
   nickname: string;
   org: { company: string; title: string };
   birthday: string; // "YYYY-MM-DD", or "MM-DD" when the year isn't known, or ""
-  address: string; // Circle's format: street / "city, region postal" / country, one per line
+  // Each value in Circle's format: street / "city, region postal" / country, one per line.
+  // Labels are Home, Work, Other or the user's own ("Summer home").
+  addresses: Item[];
   phones: Item[];
   emails: Item[];
 };
@@ -30,7 +34,7 @@ export type Conflict = { group: Group; circle: unknown; google: unknown };
 // Google's fields for each group, as used in personFields and updatePersonFields.
 export const GOOGLE_FIELD: Record<Group, string> = {
   name: "names", nickname: "nicknames", org: "organizations", birthday: "birthdays",
-  address: "addresses", phones: "phoneNumbers", emails: "emailAddresses",
+  addresses: "addresses", phones: "phoneNumbers", emails: "emailAddresses",
 };
 export const PERSON_FIELDS = [...Object.values(GOOGLE_FIELD), "photos", "metadata"].join(",");
 
@@ -44,7 +48,9 @@ export function fromCircle(p: Any): Values {
     nickname: s(p.nickname),
     org: { company: s(p.company), title: s(p.jobTitle) },
     birthday: s(p.birthday),
-    address: s(p.address).replace(/\r\n/g, "\n"),
+    // Data saved before addresses became a list has one "address" until a device updates it.
+    addresses: (Array.isArray(p.addresses) ? p.addresses : p.address ? [{ label: "Home", value: p.address }] : [])
+      .map((x: Any) => ({ label: s(x.label) || "Home", value: s(x.value).replace(/\r\n/g, "\n") })).filter((x: Item) => x.value),
     phones: (p.phones ?? []).map((x: Any) => ({ label: s(x.label) || "Mobile", value: s(x.value) })).filter((x: Item) => x.value),
     emails: (p.emails ?? []).map((x: Any) => ({ label: s(x.label) || "Personal", value: s(x.value) })).filter((x: Item) => x.value),
   };
@@ -56,7 +62,7 @@ export function applyToCircle(p: Any, v: Partial<Values>) {
   if (v.nickname !== undefined) p.nickname = v.nickname;
   if (v.org) { p.company = v.org.company; p.jobTitle = v.org.title; }
   if (v.birthday !== undefined) p.birthday = v.birthday;
-  if (v.address !== undefined) p.address = v.address;
+  if (v.addresses) { p.addresses = v.addresses.map((x) => ({ ...x })); delete p.address; }
   if (v.phones) p.phones = v.phones.map((x) => ({ ...x }));
   if (v.emails) p.emails = v.emails.map((x) => ({ ...x }));
 }
@@ -66,6 +72,11 @@ const PHONE_IN: Record<string, string> = { mobile: "Mobile", home: "Home", work:
 const PHONE_OUT: Record<string, string> = { Mobile: "mobile", Home: "home", Work: "work", Other: "other" };
 const EMAIL_IN: Record<string, string> = { home: "Personal", work: "Work", other: "Other" };
 const EMAIL_OUT: Record<string, string> = { Personal: "home", Work: "work", Other: "other" };
+// Google keeps a label of the user's own as the type itself ("Summer home").
+const ADDRESS_IN: Record<string, string> = { home: "Home", work: "Work", other: "Other" };
+const ADDRESS_OUT: Record<string, string> = { Home: "home", Work: "work", Other: "other" };
+const addressLabel = (type: unknown) => ADDRESS_IN[s(type).toLowerCase()] ?? (s(type) || "Other");
+const flat = (v: string) => v.toLowerCase().replace(/\s+/g, " ").trim();
 
 // Google's entries that came from the contact itself (not from someone's own profile).
 const own = (list: Any[] | undefined) => (list ?? []).filter((x) => !x.metadata?.source || x.metadata.source.type === "CONTACT");
@@ -100,15 +111,15 @@ export function fromGoogle(g: Any): Values {
     nickname: s(primary(g.nicknames)?.value),
     org: { company: s(o?.name), title: s(o?.title) },
     birthday: d?.month && d?.day ? (d.year ? `${d.year}-${pad(d.month)}-${pad(d.day)}` : `${pad(d.month)}-${pad(d.day)}`) : "",
-    address: formatAddress(primary(g.addresses)),
+    addresses: own(g.addresses).map((x) => ({ label: addressLabel(x.type), value: formatAddress(x) })).filter((x) => x.value),
     phones: own(g.phoneNumbers).map((x) => ({ label: PHONE_IN[s(x.type).toLowerCase()] ?? "Other", value: s(x.value) })).filter((x) => x.value),
     emails: own(g.emailAddresses).map((x) => ({ label: EMAIL_IN[s(x.type).toLowerCase()] ?? "Personal", value: s(x.value) })).filter((x) => x.value),
   };
 }
 
 // The body for Google's updateContact: the person's current Google fields for the
-// given groups, with Circle's values written in. Entries Circle doesn't model (a
-// second address, a middle name kept as is, a phone's custom type) are preserved.
+// given groups, with Circle's values written in. What Circle doesn't model (a middle
+// name, an apartment number, a phone's custom type) is preserved.
 export function toGoogle(current: Any, v: Partial<Values>): { body: Any; fields: string[] } {
   const body: Any = { etag: current.etag };
   const fields: string[] = [];
@@ -132,13 +143,20 @@ export function toGoogle(current: Any, v: Partial<Values>): { body: Any; fields:
     const m = v.birthday.match(/^(?:(\d{4})-)?(\d{2})-(\d{2})$/);
     set("birthday", m ? [{ date: { ...(m[1] ? { year: +m[1] } : {}), month: +m[2], day: +m[3] } }] : []);
   }
-  if (v.address !== undefined) {
-    const a = primary(current.addresses) ?? {};
-    const parsed = v.address ? parseAddress(v.address) : null;
-    // Structured: keep the parts Circle doesn't hold (an apartment number). Plain text: replace it all.
-    const { formattedValue: _f, streetAddress: _s, city: _c, region: _r, postalCode: _p, country: _n, countryCode: _cc, ...extra } = strip(a);
-    const entry = !parsed ? null : parsed.formattedValue ? { ...(a.type ? { type: a.type } : {}), ...parsed } : { ...extra, ...parsed };
-    set("address", replaceFirst(current.addresses, entry));
+  if (v.addresses) {
+    const have = own(current.addresses);
+    set("addresses", v.addresses.map((x, i) => {
+      const type = ADDRESS_OUT[x.label] ?? x.label;
+      // The same address as before keeps Google's own parts (an apartment number, its type spelling).
+      const same = have.find((h) => flat(formatAddress(h)) === flat(x.value));
+      if (same) return { ...strip(same), type: addressLabel(same.type) === x.label ? same.type : type };
+      // A changed address in the same place in the list keeps the parts Circle doesn't hold,
+      // when it's still made of parts; text Google can't split replaces it all.
+      const parsed = parseAddress(x.value);
+      if (parsed.formattedValue) return { type, ...parsed };
+      const { formattedValue: _f, streetAddress: _s, city: _c, region: _r, postalCode: _p, country: _n, countryCode: _cc, type: _t, ...extra } = strip(have.at(i) ?? {});
+      return { ...extra, type, ...parsed };
+    }));
   }
   if (v.phones) {
     const have = own(current.phoneNumbers);
@@ -201,7 +219,17 @@ function union(a: Item[], b: Item[], key: (x: Item) => string): Item[] {
 }
 const sameList = (a: Item[], b: Item[], key: (x: Item) => string) =>
   a.length === b.length && a.every((x, i) => key(x) === key(b[i]) && x.label === b[i].label);
-const KEY: Partial<Record<Group, (x: Item) => string>> = { phones: (x) => digits(x.value) || x.value, emails: (x) => x.value.toLowerCase() };
+const KEY: Partial<Record<Group, (x: Item) => string>> = {
+  phones: (x) => digits(x.value) || x.value, emails: (x) => x.value.toLowerCase(), addresses: (x) => flat(x.value),
+};
+// Circle's addresses came from a Google export, which can spell one a little differently
+// (an apartment line, punctuation). On a first sync, an address whose street line appears
+// in one of Google's counts as that one, so it isn't copied over as a second address.
+const words = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+const looselySame = (a: string, b: string) => {
+  const street = (t: string) => words(t.split("\n")[0]);
+  return !!street(a) && (words(b).includes(street(a)) || (!!street(b) && words(a).includes(street(b))));
+};
 function same(group: Group, a: unknown, b: unknown) {
   const key = KEY[group];
   return key ? sameList(a as Item[], b as Item[], key) : canon(a) === canon(b);
@@ -227,8 +255,12 @@ export function plan(snap: Snapshot, c: Values, g: Values, googleNewer: boolean)
       // First sync of this detail.
       if (empty(cv)) take(group, gv);
       else if (empty(gv)) take(group, cv);
-      else if (KEY[group]) take(group, union(cv as Item[], gv as Item[], KEY[group]!));
-      else out.conflicts.push({ group, circle: cv, google: gv });
+      else if (group === "addresses" && (cv as Item[]).every((a) => (gv as Item[]).some((b) => looselySame(a.value, b.value)))) take(group, gv);
+      else if (KEY[group]) {
+        // Combined; when that adds nothing to Google's list, Google's list (and its order) stands.
+        const key = KEY[group]!, both = union(cv as Item[], gv as Item[], key);
+        take(group, both.length === (gv as Item[]).length ? gv : both);
+      } else out.conflicts.push({ group, circle: cv, google: gv });
       continue;
     }
     const cChanged = !same(group, cv, sv), gChanged = !same(group, gv, sv);

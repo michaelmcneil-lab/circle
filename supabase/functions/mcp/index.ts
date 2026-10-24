@@ -112,9 +112,12 @@ function brief(c: Circle, p: any): string {
   if (p.tags?.length) out.push(`Tags: ${p.tags.join(", ")}`);
   if (p.howMet) out.push(`How they met: ${p.howMet}`);
   if (p.notes) out.push(`\n## Notes\n${p.notes}`);
+  // Data saved before addresses became a list has one "address" until a device updates it.
+  const addresses = Array.isArray(p.addresses) ? p.addresses : p.address ? [{ label: "Home", value: p.address }] : [];
   const contact = [...(p.phones || []).map((x: { label: string; value: string }) => `${x.label} phone ${x.value}`),
-    ...(p.emails || []).map((x: { label: string; value: string }) => `${x.label} email ${x.value}`)];
-  if (contact.length || p.address) out.push(`\n## Contact\n${contact.join("\n")}${p.address ? `\nAddress: ${p.address.replace(/\n/g, ", ")}` : ""}`);
+    ...(p.emails || []).map((x: { label: string; value: string }) => `${x.label} email ${x.value}`),
+    ...addresses.map((x: { label: string; value: string }) => `${x.label} address ${String(x.value).replace(/\n/g, ", ")}`)];
+  if (contact.length) out.push(`\n## Contact\n${contact.join("\n")}`);
   return out.filter((l) => l !== "").join("\n");
 }
 

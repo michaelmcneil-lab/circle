@@ -57,7 +57,7 @@ function fakeGoogle(contacts: Any[]) {
 }
 
 const person = (id: string, first: string, last: string, over = {}) => ({
-  id, firstName: first, lastName: last, name: `${first} ${last}`, nickname: "", company: "", jobTitle: "", birthday: "", address: "",
+  id, firstName: first, lastName: last, name: `${first} ${last}`, nickname: "", company: "", jobTitle: "", birthday: "", addresses: [],
   phones: [], emails: [], notes: "", ...over,
 });
 const contact = (rn: string, first: string, last: string, over = {}) => ({ resourceName: rn, names: [{ givenName: first, familyName: last }], ...over });
@@ -85,7 +85,7 @@ Deno.test("preview reports everything and changes nothing", async () => {
   eq(a.conflicts, [{ group: "org", circle: "Acme", google: "Acme Corp" }]);
   eq(a.toCircle, { Birthday: "07-09" });
   const b = r.changes.find((c) => c.personId === "b")!;
-  eq(b.toCircle, { Phones: "206-555-0100 (Mobile), 425-555-0111 (Work)" });
+  eq(b.toCircle, { Phones: "(206) 555-0100 (Mobile), 425-555-0111 (Work)" }, "Google's list already holds Circle's number, so it stands");
   eq(b.photo, "Circle's photo → Google");
   eq(r.changes.find((c) => c.personId === "c")!.create, true);
   eq([g.log, s.saves, s.links.size], [[], 0, 0], "nothing written");
