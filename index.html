@@ -992,7 +992,12 @@ async function syncNow() {
       }
       if (row.revision !== sync.rev) {
         const remote = normalize(row.data);
-        data = sync.dirty ? mergeDocs(sync.base, data, remote) : structuredClone(remote);
+        // The last synced copy may predate a format change (e.g. one address becoming a
+        // list), so it's brought up to date first: otherwise everyone would look edited
+        // on this device and this device's older copy would win over newer changes.
+        let base = null;
+        try { base = sync.base ? normalize(structuredClone(sync.base)) : null; } catch (e) { base = null; }
+        data = sync.dirty ? mergeDocs(base, data, remote) : structuredClone(remote);
         sync.base = remote; sync.rev = row.revision;
         try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch (e) {}
         storeSyncState();
