@@ -71,7 +71,7 @@ function googleApi(token: string): Google {
       // Google asks callers to slow down now and then; wait and try again.
       if ((res.status === 429 || res.status >= 500) && attempt < 3) { await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt)); continue; }
       const err = await res.json().catch(() => ({}));
-      throw new Error(`Google said: ${err.error?.message ?? res.status}`);
+      throw Object.assign(new Error(`Google said: ${err.error?.message ?? res.status}`), { status: res.status });
     }
   };
   const fields = `personFields=${R.PERSON_FIELDS}`;
@@ -184,11 +184,13 @@ async function status(userId: string) {
   const { data: links } = await admin.from("circle_google_links").select("person_id, status, conflicts").eq("user_id", userId);
   const { data: row } = await admin.from("circle_data").select("data").eq("user_id", userId).maybeSingle();
   const name = (id: string) => (row?.data?.people ?? []).find((p: Any) => p.id === id)?.name ?? "Someone";
+  const inCircle = (id: string) => (row?.data?.people ?? []).some((p: Any) => p.id === id);
   return {
     connected: !!acct.refresh_token, email: acct.google_email, mode: acct.mode, lastSyncAt: acct.last_sync_at, lastError: acct.last_error, last: acct.last_result,
     emailActivity: { on: !!acct.gmail_on, allowed: (acct.scopes ?? "").includes(GMAIL_SCOPE), checkedAt: acct.gmail_checked_at, error: acct.gmail_error, last: acct.gmail_last },
     linked: (links ?? []).filter((l) => l.status === "linked").length,
-    excluded: (links ?? []).filter((l) => l.status === "excluded").map((l) => ({ personId: l.person_id, name: name(l.person_id) })),
+    // People deleted from Circle keep an "excluded" link; only those still in Circle are listed.
+    excluded: (links ?? []).filter((l) => l.status === "excluded" && inCircle(l.person_id)).map((l) => ({ personId: l.person_id, name: name(l.person_id) })),
     conflicts: (links ?? []).flatMap((l) => (l.conflicts ?? []).map((c: R.Conflict) => ({ personId: l.person_id, name: name(l.person_id), group: c.group, circle: show(c.group, c.circle), google: show(c.group, c.google) }))),
     flags: (links ?? []).filter((l) => l.status === "google_deleted" || l.status === "circle_deleted").map((l) => ({ personId: l.person_id, name: name(l.person_id), kind: l.status })),
   };
@@ -466,6 +468,34 @@ async function handle(req: Request): Promise<Response> {
         conflicts: [], photo_synced: false, circle_photo_v: null, google_photo_url: null });
       await admin.from("circle_google").update({ google_seen: [...(acct.google_seen ?? []), rn] }).eq("user_id", uid);
       return json({ personId: id, name: person.name });
+    }
+    // Deleting someone in Circle: the app asks whether they're linked, then deletes the
+    // Google contact too or keeps it, as the user chose in the confirmation. Either way the
+    // link becomes "excluded" (not removed), so a sync running before Circle's own deletion
+    // arrives can't link them again or re-create them in Google.
+    case "google_link": {
+      const acct = await account(uid);
+      const { data: link } = await admin.from("circle_google_links").select("status, resource_name").eq("user_id", uid).eq("person_id", String(body.personId)).maybeSingle();
+      return json({ linked: !!acct?.refresh_token && link?.status === "linked" && !!link.resource_name });
+    }
+    case "delete_from_google":
+    case "unlink": {
+      const pid = String(body.personId);
+      const store = supabaseStore(uid);
+      const { data: link } = await admin.from("circle_google_links").select("*").eq("user_id", uid).eq("person_id", pid).maybeSingle();
+      if (!link?.resource_name) return json({ ok: true });
+      if (body.action === "delete_from_google") {
+        const acct = await account(uid);
+        if (!acct?.refresh_token) return json({ error: "Google isn't connected." }, 400);
+        try {
+          // Google keeps deleted contacts in its Trash for 30 days.
+          await googleApi(await accessToken(acct.refresh_token)).remove(link.resource_name);
+        } catch (err) {
+          if ((err as { status?: number }).status !== 404) throw err; // already gone from Google
+        }
+      }
+      await store.saveLink({ ...link, status: "excluded", resource_name: null, conflicts: [] });
+      return json({ ok: true });
     }
     case "dismiss_google": {
       const acct = await account(uid);

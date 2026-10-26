@@ -582,6 +582,21 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
   </form>
 </dialog>
 
+<!-- Delete a person: with the choice to delete their Google contact too -->
+<dialog id="delDlg">
+  <form id="delForm">
+    <h3 id="delTitle">Delete</h3>
+    <p class="small" style="margin:0">Their life events and one-on-one conversations will be deleted, and they'll be taken off any group conversations.</p>
+    <label class="check" id="delGoogleRow" hidden><input type="checkbox" id="delGoogle" checked>
+      <span>Also delete from Google Contacts <span class="hint" style="display:block">It also leaves your iPhone. Google keeps it in its Trash for 30 days.</span></span></label>
+    <p class="small muted" id="delChecking" style="margin:0" hidden>Checking Google…</p>
+    <div class="dlg-actions">
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="submit" class="btn danger" id="delGo">Delete</button>
+    </div>
+  </form>
+</dialog>
+
 <!-- Google Contacts sync dialog -->
 <dialog id="gcDlg">
   <form id="gcForm">
@@ -3058,21 +3073,61 @@ $('#people').addEventListener('click', e => { const b = e.target.closest('[data-
 $('#menuBtn').addEventListener('click', e => { e.stopPropagation(); $('#menuList').classList.toggle('open'); });
 document.addEventListener('click', () => $('#menuList').classList.remove('open'));
 
+// ---------- Deleting a person ----------
+// If they're linked to a Google contact, the confirmation offers to delete that too (ticked by
+// default). Google is asked first, so a failure there never leaves half a deletion unexplained.
+let delTarget = null, delLinked = false;
+async function openDelete(p) {
+  delTarget = p; delLinked = false;
+  $('#delTitle').textContent = `Delete ${p.name}?`;
+  $('#delGoogleRow').hidden = true; $('#delGoogle').checked = true;
+  $('#delGo').disabled = false;
+  $('#delDlg').showModal();
+  if (!sync.user || !navigator.onLine) return;
+  $('#delChecking').hidden = false;
+  try { delLinked = !!(await gcCall('google_link', { personId: p.id })).linked; } catch (e) { delLinked = false; }
+  $('#delChecking').hidden = true;
+  if (delTarget === p) $('#delGoogleRow').hidden = !delLinked;
+}
+function removePerson(p) {
+  deletePhoto(p);
+  data.people = data.people.filter(x => x !== p);
+  data.interactions.forEach(i => i.personIds = i.personIds.filter(id => id !== p.id));
+  data.interactions = data.interactions.filter(i => i.personIds.length);
+  data.relations = data.relations.filter(r => r.from !== p.id && r.to !== p.id);
+  data.followUps.forEach(f => f.personIds = f.personIds.filter(id => id !== p.id));
+  data.followUps = data.followUps.filter(f => f.personIds.length);
+  ui.selected = null; save(); render();
+}
+$('#delForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const p = delTarget;
+  if (!p) return;
+  const btn = $('#delGo');
+  btn.disabled = true;
+  let note = '';
+  if (delLinked) {
+    const alsoGoogle = $('#delGoogle').checked;
+    btn.textContent = alsoGoogle ? 'Deleting from Google…' : 'Deleting…';
+    try {
+      await gcCall(alsoGoogle ? 'delete_from_google' : 'unlink', { personId: p.id });
+      if (alsoGoogle) note = ' and from Google Contacts';
+    } catch (err) {
+      btn.textContent = 'Delete'; btn.disabled = false;
+      if (!confirm(`Couldn't ${alsoGoogle ? 'delete them from Google' : 'reach Google'}: ${err.message}\n\nDelete ${p.name} from Circle only? Their Google contact stays.`)) return;
+    }
+  }
+  $('#delDlg').close();
+  btn.textContent = 'Delete'; btn.disabled = false;
+  delTarget = null;
+  removePerson(p);
+  toast(`${p.name} deleted from Circle${note}.`);
+});
+
 const actions = {
   addPerson: () => openPersonDlg(),
   editPerson: () => openPersonDlg(getPerson(ui.selected)),
-  delPerson: () => {
-    const p = getPerson(ui.selected);
-    if (!confirm(`Delete ${p.name}? Their life events and one-on-one conversations will be deleted, and they'll be taken off any group conversations.`)) return;
-    deletePhoto(p);
-    data.people = data.people.filter(x => x !== p);
-    data.interactions.forEach(i => i.personIds = i.personIds.filter(id => id !== p.id));
-    data.interactions = data.interactions.filter(i => i.personIds.length);
-    data.relations = data.relations.filter(r => r.from !== p.id && r.to !== p.id);
-    data.followUps.forEach(f => f.personIds = f.personIds.filter(id => id !== p.id));
-    data.followUps = data.followUps.filter(f => f.personIds.length);
-    ui.selected = null; save(); render();
-  },
+  delPerson: () => openDelete(getPerson(ui.selected)),
   addEvent: () => openEvDlg(ui.selected),
   addFamily: () => openFamDlg(),
   addFollowUp: () => openFuDlg(ui.selected || null),
