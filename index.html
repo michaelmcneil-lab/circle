@@ -608,6 +608,11 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
         <button type="button" class="btn" id="gcPreview2">Preview</button>
         <button type="button" class="btn ghost" id="gcPause">Pause syncing</button></div>
     </section>
+    <section class="stack" style="gap:8px" id="gcNewBox" hidden>
+      <strong>New in Google</strong>
+      <span class="hint">Contacts added to Google that aren't in Circle yet. Add the ones you want to keep up with; they come in linked, with their details and photo.</span>
+      <ul class="list" id="gcNew"></ul>
+    </section>
     <section class="stack" style="gap:8px" id="gcEmailBox" hidden>
       <strong>Email activity</strong>
       <span class="hint">Adds an Email entry to someone's timeline when you email them, or they email you, with the subject as the note. One entry per person per day. Skips mailing lists and emails to more than 5 people. Circle sees only who, when and the subject, never what the email says.</span>
@@ -2738,9 +2743,38 @@ const gcWhen = s => s ? new Date(s).toLocaleString([], { month: 'short', day: 'n
 async function openGoogle() {
   if (!sync.user) return toast('Sign in first.');
   $('#gcResultBox').hidden = true;
+  $('#gcNewBox').hidden = true;
   $('#gcDlg').showModal();
   await loadGoogle();
+  loadNewInGoogle();
 }
+// Asked separately, since it reads all of Google Contacts and the rest of the screen needn't wait.
+async function loadNewInGoogle() {
+  let r;
+  try { r = await gcCall('new_in_google'); } catch (err) { return; }
+  const list = r.candidates || [];
+  $('#gcNewBox').hidden = !list.length;
+  const rel = RELATIONSHIPS.map(x => `<option ${x === 'Friend' ? 'selected' : ''}>${esc(x)}</option>`).join('');
+  // Name on its own line, the choices under it, so a long name isn't squeezed on a phone.
+  $('#gcNew').innerHTML = list.map(c => `<li data-rn="${esc(c.resourceName)}" style="flex-wrap:wrap"><div class="grow" style="flex:1 1 100%"><strong>${esc(c.name)}</strong>
+      <div class="small muted">${[c.company !== c.name && c.company, c.phone, c.email].filter(Boolean).map(esc).join(' · ') || 'No phone or email'}</div></div>
+      <select aria-label="Relationship" style="width:auto">${rel}</select>
+      <button type="button" class="btn small primary" data-gc-add>Add</button>
+      <button type="button" class="btn ghost small" data-gc-dismiss title="Don't offer this contact again">Not now</button></li>`).join('');
+}
+$('#gcNew').addEventListener('click', e => {
+  const add = e.target.closest('[data-gc-add]'), dismiss = e.target.closest('[data-gc-dismiss]');
+  const li = (add || dismiss)?.closest('li');
+  if (!li) return;
+  const done = () => { li.remove(); $('#gcNewBox').hidden = !$('#gcNew').children.length; };
+  if (add) gcBusy(add, 'Adding…', async () => {
+    const r = await gcCall('add_from_google', { resourceName: li.dataset.rn, relationship: li.querySelector('select').value });
+    done();
+    toast(`${r.name} added to Circle.`);
+    syncNow();
+  });
+  if (dismiss) gcBusy(dismiss, '…', async () => { await gcCall('dismiss_google', { resourceName: li.dataset.rn }); done(); });
+});
 async function loadGoogle() {
   let st;
   try { st = await gcCall('status'); }

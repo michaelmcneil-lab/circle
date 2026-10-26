@@ -15,6 +15,7 @@ import * as R from "../_shared/google-sync.ts";
 import type { Doc } from "../_shared/circle.ts";
 import { type Google, type Link, runSync, show, type Store } from "./sync.ts";
 import { applyEvents, eventsFrom, type Message } from "../_shared/email-activity.ts";
+import { baseline, newInGoogle, personFromGoogle } from "./new-in-google.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -143,6 +144,7 @@ function supabaseStore(userId: string): Store {
 
 type Account = {
   user_id: string; refresh_token: string | null; google_email: string | null; mode: "off" | "all"; last_sync_at: string | null; last_error: string | null; last_result: Any;
+  google_seen: string[] | null; // contacts already offered under "New in Google"
   scopes: string | null; gmail_on: boolean; gmail_history_id: string | null; gmail_checked_at: string | null; gmail_error: string | null; gmail_last: Any;
 };
 async function account(userId: string): Promise<Account | null> {
@@ -426,6 +428,49 @@ async function handle(req: Request): Promise<Response> {
       } else if (link.status === "google_deleted") {
         await supabaseStore(uid).saveLink({ ...link, status: "excluded", resource_name: null }); // Circle only from now on
       }
+      return json({ ok: true });
+    }
+    case "new_in_google": {
+      const acct = await account(uid);
+      if (!acct?.refresh_token) return json({ candidates: [] });
+      const store = supabaseStore(uid);
+      const [contacts, links, loaded] = [await googleApi(await accessToken(acct.refresh_token)).list(), await store.links(), await store.loadDoc()];
+      const people = loaded?.doc.people ?? [];
+      let seen = acct.google_seen;
+      if (!seen) {
+        seen = baseline(contacts, links, people, Date.now());
+        await admin.from("circle_google").update({ google_seen: seen }).eq("user_id", uid);
+      }
+      return json({ candidates: newInGoogle(contacts, links, people, new Set(seen)) });
+    }
+    case "add_from_google": {
+      // Makes a Circle person from the contact, already linked, so the sync has nothing to redo.
+      const rn = String(body.resourceName ?? ""), relationship = String(body.relationship || "Friend").slice(0, 40);
+      const acct = await account(uid);
+      if (!acct?.refresh_token || !rn.startsWith("people/")) return json({ error: "Nothing to add" }, 400);
+      const store = supabaseStore(uid);
+      if ((await store.links()).some((l) => l.resource_name === rn)) return json({ error: "Already in Circle" }, 400);
+      const g = await googleApi(await accessToken(acct.refresh_token)).get(rn);
+      const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8); // the same shape as the app's ids
+      let person: Any = null;
+      for (let attempt = 0; attempt < 4 && !person; attempt++) {
+        const loaded = await store.loadDoc();
+        if (!loaded) return json({ error: "Circle's data isn't set up yet" }, 400);
+        const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date());
+        const p = personFromGoogle(g, id, relationship, today);
+        loaded.doc.people.push(p);
+        if (await store.saveDoc(loaded.doc, loaded.rev)) person = p; // else a device saved first: try again
+      }
+      if (!person) return json({ error: "Circle was busy. Try again." }, 409);
+      await store.saveLink({ person_id: id, resource_name: rn, status: "linked", etag: g.etag ?? null, snapshot: R.plan({}, R.fromCircle(person), R.fromGoogle(g), false).snapshot,
+        conflicts: [], photo_synced: false, circle_photo_v: null, google_photo_url: null });
+      await admin.from("circle_google").update({ google_seen: [...(acct.google_seen ?? []), rn] }).eq("user_id", uid);
+      return json({ personId: id, name: person.name });
+    }
+    case "dismiss_google": {
+      const acct = await account(uid);
+      const rn = String(body.resourceName ?? "");
+      if (rn) await admin.from("circle_google").update({ google_seen: [...new Set([...(acct?.google_seen ?? []), rn])] }).eq("user_id", uid);
       return json({ ok: true });
     }
     case "email_on": {
