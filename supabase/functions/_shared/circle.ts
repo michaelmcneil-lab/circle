@@ -2,7 +2,8 @@
 // app's own logic in index.html: keep the two in step when either changes.
 
 // deno-lint-ignore no-explicit-any
-export type Doc = { people: any[]; interactions: any[]; followUps: any[]; relations: any[] };
+// eventLinks: who calendar events are with, as corrected by the user ({ id: event UID or one meeting's key, personIds }).
+export type Doc = { people: any[]; interactions: any[]; followUps: any[]; relations: any[]; eventLinks?: any[] };
 export const IX_LABEL: Record<string, string> = { call: "Phone call", text: "Texted", inperson: "In person", video: "Video call", email: "Email", social: "Social media", card: "Card / letter" };
 export const EV_LABEL: Record<string, string> = {
   birth: "Birth / adoption", wedding: "Engagement / wedding", graduation: "Graduation", job: "New job / career", move: "Moved",

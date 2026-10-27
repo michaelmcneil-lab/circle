@@ -582,6 +582,26 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
   </form>
 </dialog>
 
+<!-- Who a calendar event is with: corrects Circle's guess from names -->
+<dialog id="evWhoDlg">
+  <form id="evWhoForm">
+    <h3 id="evWhoTitle">Who is this with?</h3>
+    <p class="small muted" style="margin:0" id="evWhoWhen"></p>
+    <ul class="list" id="evWhoList"></ul>
+    <label class="field"><span>Add someone</span><select id="evWhoAdd"></select></label>
+    <div class="stack" style="gap:4px" id="evWhoScope">
+      <label class="check"><input type="radio" name="evScope" value="series" checked> Every time this event repeats</label>
+      <label class="check"><input type="radio" name="evScope" value="one"> Just this one</label>
+    </div>
+    <span class="hint">Circle normally guesses from names in the event. Your choice replaces that guess.</span>
+    <div class="dlg-actions">
+      <button type="button" class="btn ghost" id="evWhoReset" hidden>Go back to guessing</button>
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="submit" class="btn primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
 <!-- Delete a person: with the choice to delete their Google contact too -->
 <dialog id="delDlg">
   <form id="delForm">
@@ -868,7 +888,7 @@ function ordinal(n) { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n 
 // Conversations live in one list so a single entry can include several people.
 // Relations link two people in Circle: { from, to, type } means "to is from's <type>".
 // Family members who aren't in Circle themselves (kids, pets) live on the person.
-let data = { version: 2, people: [], interactions: [], relations: [], followUps: [] };
+let data = { version: 2, people: [], interactions: [], relations: [], followUps: [], eventLinks: [] };
 let saveTimer = null;
 
 function normalize(d) {
@@ -923,6 +943,11 @@ function normalize(d) {
   d.relations = (Array.isArray(d.relations) ? d.relations : [])
     .filter(r => ids.has(r.from) && ids.has(r.to) && r.from !== r.to && FAMILY_REL[r.type]?.rev);
   d.relations.forEach(r => r.id ||= uid());
+  // Who calendar events are with, as corrected by hand: { id, personIds, title }, where id is
+  // the event's UID (a whole repeating series) or one meeting's key (just that one). The
+  // calendar reader on the server uses these instead of matching by name.
+  d.eventLinks = (Array.isArray(d.eventLinks) ? d.eventLinks : []).filter(l => l && l.id)
+    .map(l => ({ id: String(l.id), title: String(l.title || ''), personIds: (l.personIds || []).filter(id => ids.has(id)) }));
   d.version = 2;
   return d;
 }
@@ -974,7 +999,7 @@ const canon = v => JSON.stringify(v, (k, x) => x && typeof x === 'object' && !Ar
   ? Object.fromEntries(Object.keys(x).sort().map(key => [key, x[key]])) : x);
 function mergeDocs(base, local, remote) {
   const out = {};
-  for (const key of ['people', 'interactions', 'relations', 'followUps']) {
+  for (const key of ['people', 'interactions', 'relations', 'followUps', 'eventLinks']) {
     const byId = arr => new Map((arr || []).map(x => [x.id, x]));
     const B = byId(base?.[key]), L = byId(local[key]), R = byId(remote[key]);
     out[key] = [];
@@ -1411,7 +1436,7 @@ function renderHome() {
   for (const m of calEvents.slice(0, CAL_LIMIT)) {
     const p = m.person_ids.map(getPerson).find(Boolean);
     const time = m.all_day ? 'All day' : new Date(m.start_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    upcoming.push({ p, days: -daysSince(eventDate(m)), cal: true, people: m.person_ids,
+    upcoming.push({ p, days: -daysSince(eventDate(m)), cal: true, people: m.person_ids, ev: m,
       label: `${p ? '📅 ' : ''}${esc(m.title || 'Event')} · ${time}${multiCal && m.calendar_label ? ` · ${esc(m.calendar_label)}` : ''}` });
   }
   const moreCal = Math.max(0, calEvents.length - CAL_LIMIT);
@@ -1454,7 +1479,7 @@ function renderHome() {
             // A calendar event with nobody from Circle gets a calendar icon and its title instead of a name.
             const who = u.cal ? (u.people.some(getPerson) ? peopleLinks(u.people) : '') : personLink(u.p);
             const icon = u.p ? avatar(u.p) : '<div class="avatar" style="--h:210" aria-hidden="true">📅</div>';
-            return `<li>${icon}<div class="grow">${who}<div class="small ${who ? 'muted' : ''}">${u.label}</div></div><span class="pill ${u.days <= 7 ? 'accent' : ''}">${inDays(u.days)}</span></li>`;
+            return `<li>${icon}<div class="grow">${who}<div class="small ${who ? 'muted' : ''}">${u.label}</div></div>${u.cal ? whoBtn(u.ev) : ''}<span class="pill ${u.days <= 7 ? 'accent' : ''}">${inDays(u.days)}</span></li>`;
           }).join('')}</ul>${moreCal ? `<p class="small muted" style="margin:8px 0 0">and ${moreCal} more calendar event${moreCal === 1 ? '' : 's'}</p>` : ''}` : empty('No birthdays, anniversaries or calendar events in the next month.')}
         </section>
       </div>
@@ -2522,6 +2547,74 @@ document.addEventListener('click', async e => {
 // Circle's server reads the user's calendar (circle_agenda holds today's meetings
 // with people in Circle) and sends notifications to devices that turned them on.
 let agenda = []; // today's meetings: { event_key, start_at, end_at, title, person_ids, attendee_count }
+// An event's key is "<UID>|<start>"; the UID is shared by every occurrence of a repeating event.
+const eventUid = m => m.event_key.slice(0, m.event_key.lastIndexOf('|'));
+const whoBtn = m => `<button type="button" class="btn ghost small" data-ev-who="${esc(m.event_key)}" title="Change who this event is with">Who?</button>`;
+
+// ---------- Who an event is with ----------
+let evWho = null; // { m, ids }
+function openEvWho(key) {
+  const m = agenda.find(x => x.event_key === key);
+  if (!m) return;
+  const uidKey = eventUid(m);
+  const mine = data.eventLinks.find(l => l.id === m.event_key), series = data.eventLinks.find(l => l.id === uidKey);
+  evWho = { m, ids: [...m.person_ids.filter(getPerson)] };
+  $('#evWhoTitle').textContent = m.title || 'Event';
+  $('#evWhoWhen').textContent = m.all_day ? `${fmtDay(eventDate(m))} · All day` : `${fmtDay(eventDate(m))} · ${new Date(m.start_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  // Offer "every time" only when the calendar shows this event more than once.
+  const repeats = agenda.filter(x => eventUid(x) === uidKey).length > 1 || !!series;
+  $('#evWhoScope').hidden = !repeats;
+  $('#evWhoForm').evScope.value = mine || !repeats ? 'one' : 'series';
+  $('#evWhoReset').hidden = !(mine || series);
+  renderEvWho();
+  $('#evWhoDlg').showModal();
+}
+function renderEvWho() {
+  $('#evWhoList').innerHTML = evWho.ids.map(id => `<li>${avatar(getPerson(id))}<div class="grow">${esc(getPerson(id).name)}</div>
+      <button type="button" class="btn ghost small" data-ev-remove="${id}" aria-label="Remove">✕</button></li>`).join('')
+    || '<li class="small muted">Nobody from Circle. Add someone below, or save to keep it that way.</li>';
+  $('#evWhoAdd').innerHTML = '<option value="">Choose a person…</option>' + sortedPeople().filter(p => !evWho.ids.includes(p.id))
+    .map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+}
+$('#evWhoAdd').addEventListener('change', e => { if (e.target.value) { evWho.ids.push(e.target.value); renderEvWho(); } });
+$('#evWhoList').addEventListener('click', e => {
+  const b = e.target.closest('[data-ev-remove]');
+  if (b) { evWho.ids = evWho.ids.filter(id => id !== b.dataset.evRemove); renderEvWho(); }
+});
+// Saves the choice, shows it straight away, and has the server re-read the calendar with it.
+function saveEvWho(link) {
+  const { m } = evWho, uidKey = eventUid(m);
+  if (link === null) {
+    data.eventLinks = data.eventLinks.filter(l => l.id !== m.event_key && l.id !== uidKey);
+  } else if (link.id === uidKey) {
+    // A choice for the whole series replaces any made for single occurrences of it.
+    const keys = new Set(agenda.filter(x => eventUid(x) === uidKey).map(x => x.event_key));
+    data.eventLinks = data.eventLinks.filter(l => l.id !== uidKey && !keys.has(l.id)).concat(link);
+  } else {
+    data.eventLinks = data.eventLinks.filter(l => l.id !== link.id).concat(link);
+  }
+  if (link) for (const x of agenda) if (x.event_key === link.id || (link.id === uidKey && eventUid(x) === uidKey)) x.person_ids = [...link.personIds];
+  $('#evWhoDlg').close();
+  save(); render();
+  toast(link === null ? 'Circle will guess from the event again.' : 'Saved. Circle will remember this.');
+  // Once the choice has reached the server, re-read the calendar so every device sees it.
+  setTimeout(async () => {
+    await syncNow();
+    try { await sync.client.functions.invoke('notify', { body: { action: 'refresh' } }); } catch (e) {}
+    loadAgenda();
+  }, 900);
+}
+$('#evWhoForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const { m } = evWho;
+  const scope = $('#evWhoScope').hidden ? 'one' : e.target.evScope.value;
+  saveEvWho({ id: scope === 'series' ? eventUid(m) : m.event_key, title: m.title || '', personIds: [...evWho.ids] });
+});
+$('#evWhoReset').addEventListener('click', () => saveEvWho(null));
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-ev-who]');
+  if (b) openEvWho(b.dataset.evWho);
+});
 async function loadAgenda() {
   if (!sync.user) return;
   // From the start of today (a few hours earlier, so all-day events dated today are
@@ -2534,6 +2627,13 @@ async function loadAgenda() {
   if (error) return; // not set up yet
   const before = canon(agenda);
   agenda = rows || [];
+  // Your choices of who an event is with apply here too, so they show at once, even before
+  // the server has re-read the calendar with them.
+  const chosen = new Map(data.eventLinks.map(l => [l.id, l.personIds]));
+  for (const m of agenda) {
+    const ids = chosen.get(m.event_key) ?? chosen.get(m.event_key.slice(0, m.event_key.lastIndexOf('|')));
+    if (ids) m.person_ids = [...ids];
+  }
   if (canon(agenda) !== before) render();
 }
 // The local calendar date an agenda event falls on ("YYYY-MM-DD").
@@ -2562,7 +2662,7 @@ function personCalendarCard(p) {
     return `<li><div class="avatar" style="--h:210" aria-hidden="true">📅</div>
       <div class="grow"><strong>${esc(m.title || 'Event')}</strong>
         <div class="small muted">${when}${multiCal && m.calendar_label ? ` · ${esc(m.calendar_label)}` : ''}${others ? ` · with ${others}` : ''}</div></div>
-      ${ended ? `<button class="btn small" data-note-for="${m.person_ids.join(',')}" data-note-text="${esc(note)}">Add a note</button>`
+      ${whoBtn(m)}${ended ? `<button class="btn small" data-note-for="${m.person_ids.join(',')}" data-note-text="${esc(note)}">Add a note</button>`
         : `<span class="pill ${-daysSince(eventDate(m)) <= 7 ? 'accent' : ''}">${inDays(-daysSince(eventDate(m)))}</span>`}</li>`;
   }).join('');
   return `<section class="card" style="margin-bottom:16px"><h2>On your calendar</h2><ul class="list">${rows}</ul></section>`;
@@ -2584,7 +2684,7 @@ function todayCard() {
     }).join('');
     return `<li><div class="today-time ${ended ? 'muted' : ''}">${time}</div>
       <div class="grow"><strong>${esc(m.title || 'Meeting')}</strong> <span class="small muted">with</span> ${peopleLinks(m.person_ids)}${notes}</div>
-      ${ended ? `<button class="btn small" data-note-for="${m.people.map(p => p.id).join(',')}">Add a note</button>` : ''}</li>`;
+      ${whoBtn(m)}${ended ? `<button class="btn small" data-note-for="${m.people.map(p => p.id).join(',')}">Add a note</button>` : ''}</li>`;
   }).join('');
   return `<section class="card today-card" id="todayCard"><h2>Today</h2><ul class="list">${rows}</ul></section>`;
 }

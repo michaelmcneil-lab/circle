@@ -156,6 +156,12 @@ function meetingsFrom(ics: string, doc: Doc, selfEmail: string, from: Date, to: 
     return { id: p.id, names: names.map((n) => ({ lower: n.toLowerCase(), re: word(n) })) };
   });
   const self = selfEmail.toLowerCase();
+  // Who an event is with, as the user corrected it in Circle: for one occurrence (keyed by
+  // the meeting's key) or a whole repeating series (keyed by the event's UID). These win
+  // over matching by name; an empty list means "nobody in Circle".
+  const known = new Set(people.map((p) => p.id));
+  const chosen = new Map<string, string[]>((doc.eventLinks ?? []).map((l: { id: string; personIds: string[] }) =>
+    [String(l.id), (l.personIds ?? []).filter((id) => known.has(id))]));
 
   const out: Meeting[] = [];
   const add = (e: InstanceType<typeof ICAL.Event>, start: InstanceType<typeof ICAL.Time>, end: InstanceType<typeof ICAL.Time>) => {
@@ -180,8 +186,11 @@ function meetingsFrom(ics: string, doc: Doc, selfEmail: string, from: Date, to: 
     const startJs = allDay ? noon(start) : start.toJSDate(), endJs = allDay ? noon(end) : end.toJSDate();
     if (isNaN(+startJs) || isNaN(+endJs)) return; // a date the feed doesn't spell out properly
     const date = allDay ? startJs.toISOString().slice(0, 10) : "";
+    const key = `${e.uid}|${allDay ? date : startJs.toISOString()}`;
+    const picked = chosen.get(key) ?? chosen.get(String(e.uid));
+    if (picked) { ids.clear(); picked.forEach((id) => ids.add(id)); }
     out.push({
-      key: `${e.uid}|${allDay ? date : startJs.toISOString()}`, start: startJs, end: endJs, title: e.summary || "(no title)", personIds: [...ids],
+      key, start: startJs, end: endJs, title: e.summary || "(no title)", personIds: [...ids],
       attendees: Math.max(attendees.filter((a) => a.status !== "DECLINED").length, ids.size + 1), allDay, date,
     });
   };
