@@ -9,7 +9,7 @@
 // message (or batch) answered with JSON. No server-sent events are needed.
 
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.117.3";
-import { Circle, type Doc, EV_LABEL, fmt, HARD, IX_LABEL, REL_LABEL, REL_REV } from "../_shared/circle.ts";
+import { Circle, type Doc, EV_LABEL, fmt, HARD, IX_LABEL, REL_LABEL, REL_REV, RINGS } from "../_shared/circle.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
@@ -47,7 +47,7 @@ const TOOLS = [
   {
     name: "add_note",
     title: "Add a note to the Circle Inbox",
-    description: "Send a note to the user's Circle Inbox, where it's sorted into suggested updates (conversations, follow-ups with dates, life events, facts, and contact details such as a birthday, phone number, email, address, company or job title) that the user reviews and approves in the Circle app. Use it when the user wants to record something about someone, e.g. 'I just spoke with Tiz, he's having a hard week, follow up Sunday'. Pass the user's note in their own words, including names and any dates. Nothing in Circle changes until they approve it.",
+    description: "Send a note to the user's Circle Inbox, where it's sorted into suggested updates (conversations, follow-ups with dates, life events, facts, and contact details such as a birthday, phone number, email, address, company or job title, or where someone sits in the user's circle and whether to draw closer or give space) that the user reviews and approves in the Circle app. Use it when the user wants to record something about someone, e.g. 'I just spoke with Tiz, he's having a hard week, follow up Sunday'. Pass the user's note in their own words, including names and any dates. Nothing in Circle changes until they approve it.",
     inputSchema: { type: "object", properties: { note: { type: "string", description: "The note, in the user's own words" } }, required: ["note"] },
     annotations: { readOnlyHint: false, destructiveHint: false },
   },
@@ -56,7 +56,9 @@ const TOOLS = [
 function personLine(c: Circle, p: { id: string; name: string; nickname?: string; relationship?: string; company?: string }) {
   const last = c.lastContact(p.id);
   const hard = (c.person(p.id).events || []).filter((e: { type: string }) => HARD.has(e.type) && c.eventState(e) === "prominent");
-  const bits = [p.relationship, p.company, last ? `last talked ${fmt(last)}` : "no conversations logged"];
+  const q = p as { closeness?: string; direction?: string };
+  const bits = [p.relationship, q.closeness ? `${RINGS[q.closeness] ?? q.closeness}${q.direction === "closer" ? " (drawing closer)" : q.direction === "space" ? " (giving space)" : ""}` : "",
+    p.company, last ? `last talked ${fmt(last)}` : "no conversations logged"];
   if (hard.length) bits.push(`going through: ${hard.map((e: { title: string }) => e.title).join("; ")}`);
   const due = c.openFollowUps(p.id).filter((f) => f.due && c.since(f.due) >= 0);
   if (due.length) bits.push(`${due.length} follow-up${due.length > 1 ? "s" : ""} due`);
@@ -68,6 +70,11 @@ function brief(c: Circle, p: any): string {
   const out: string[] = [];
   out.push(`# ${p.name}${p.pronouns ? ` (${p.pronouns})` : ""}`);
   out.push([p.relationship, [p.jobTitle, p.company].filter(Boolean).join(" at ")].filter(Boolean).join(" · "));
+  // Where they are in the user's circle and which way the user wants it to go: guidance for how to help.
+  if (p.closeness) {
+    out.push(`Closeness: ${RINGS[p.closeness] ?? p.closeness}${p.direction ? `; the user wants to ${p.direction === "closer" ? "draw closer (nurture this relationship)" : "give this relationship more space"}` : ""}`
+      + `${p.closenessWhy ? `. Why: ${p.closenessWhy}` : ""}`);
+  }
   const last = c.lastContact(p.id);
   out.push(last ? `Last talked: ${fmt(last)} (${c.since(last)} days ago)` : "No conversations logged yet.");
   if (p.contactEvery) out.push(`Check-in goal: every ${p.contactEvery} days${c.overdue(p) ? " (overdue)" : ""}`);

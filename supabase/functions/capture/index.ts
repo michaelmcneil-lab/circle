@@ -39,7 +39,8 @@ const IX_TYPES = ["call", "text", "inperson", "video", "email", "social", "card"
 const EV_TYPES = ["birth", "wedding", "graduation", "job", "move", "travel", "milestone", "loss", "health", "breakup", "hardship", "other"];
 const KINDS = ["conversation", "follow_up", "life_event", "note", "detail"];
 // Contact details a "detail" action can set. Keep in step with DETAIL_FIELDS in index.html.
-const DETAIL_FIELDS = ["birthday", "phone", "email", "address", "company", "job_title", "nickname"];
+const DETAIL_FIELDS = ["birthday", "phone", "email", "address", "company", "job_title", "nickname", "closeness", "direction"];
+const RING_KEYS = ["inner", "close", "connected", "wider", "acquaint"], DIRECTION_KEYS = ["closer", "steady", "space"];
 
 // Every field is required (unused ones are ""), which keeps the schema strict and simple.
 const str = { type: "string" };
@@ -84,7 +85,7 @@ Each suggestion is one action:
 - "follow_up": something the user means to do or ask about later ("I should check in", "remember to ask about the interview"). follow_up_text: a short instruction, e.g. "Check in on how he's doing". due: the date if the note gives one, otherwise "".
 - "life_event": something significant happening in the person's life: a loss or death, illness or surgery, new job, move, engagement or wedding, new baby, breakup, a hard time, a big trip, a milestone. Pick the closest event_type ("hardship" for a hard time or stress, "loss" for a death). title: a few words, e.g. "Going through a hard time". date: when it happened (today if not said). until: only if the note gives a time frame, e.g. "this week" means the coming Sunday; otherwise "". how_to_show_up: only if the note says how the user wants to support them; otherwise "". note: details they shared, otherwise "".
 - "note": a lasting fact worth remembering that isn't an event: preferences, interests, gift ideas, allergies, names of kids or pets.
-- "detail": a change to the person's contact details. detail_field is one of: "birthday" (detail_value "YYYY-MM-DD", or "MM-DD" when no year is given), "phone", "email", "address" (one line per part: street, then "City, ST ZIP", then country if given), "company", "job_title", "nickname". detail_label only for phone ("Mobile", "Home", "Work" or "Other"), email ("Personal", "Work" or "Other") and address ("Home", "Work", "Other", or the user's own words such as "Summer home"); otherwise "". One action per detail. Use this, not "note", whenever the note gives or corrects one of these details, e.g. "Anna's birthday is May 4", "Ben's new number is 206-555-0100", "Cara now works at Acme". A new job can also be a life_event; a moved house can also be a life_event with the new address as a detail.
+- "detail": a change to the person's contact details. detail_field is one of: "birthday" (detail_value "YYYY-MM-DD", or "MM-DD" when no year is given), "phone", "email", "address" (one line per part: street, then "City, ST ZIP", then country if given), "company", "job_title", "nickname". detail_label only for phone ("Mobile", "Home", "Work" or "Other"), email ("Personal", "Work" or "Other") and address ("Home", "Work", "Other", or the user's own words such as "Summer home"); otherwise "". Two more describe the relationship itself, only when the user says so plainly: "closeness" (where the person sits in the user's circle; detail_value one of "inner" for inner circle, "close", "connected", "wider" for wider circle, "acquaint" for acquaintances) and "direction" (detail_value "closer" when the user wants to nurture or invest in the relationship, "space" when they want to step back or distance themselves, "steady" to stop either). One action per detail. Use this, not "note", whenever the note gives or corrects one of these details, e.g. "Anna's birthday is May 4", "Ben's new number is 206-555-0100", "Cara now works at Acme". A new job can also be a life_event; a moved house can also be a life_event with the new address as a detail.
 
 People: match each person to the directory below by full name, first name, nickname, or as a family member of someone listed. Use their id when you're confident. If the note names someone who isn't listed, or you can't tell which of several people it means, set id to "" and give the name as written. When the note is about a listed person's family member who isn't in the directory (a child, partner or pet), attach the action to the listed person and name the family member in the text. If you can't tell who a note is about at all (a shared message often arrives without the sender's name), still suggest the actions and leave people empty: the user will choose who it is.
 
@@ -148,7 +149,10 @@ function cleanActions(raw: any, ids: Set<string>) {
     note: String(a.note ?? ""),
     detail_field: DETAIL_FIELDS.includes(a.detail_field) ? a.detail_field : "",
     // A birthday must be a date Circle can read; anything else is dropped below.
-    detail_value: a.detail_field === "birthday" && !/^(\d{4}-)?\d{2}-\d{2}$/.test(String(a.detail_value ?? "")) ? "" : String(a.detail_value ?? "").slice(0, 500),
+    detail_value: (a.detail_field === "birthday" && !/^(\d{4}-)?\d{2}-\d{2}$/.test(String(a.detail_value ?? "")))
+        || (a.detail_field === "closeness" && !RING_KEYS.includes(a.detail_value))
+        || (a.detail_field === "direction" && !DIRECTION_KEYS.includes(a.detail_value))
+      ? "" : String(a.detail_value ?? "").slice(0, 500),
     detail_label: String(a.detail_label ?? "").slice(0, 40),
   // deno-lint-ignore no-explicit-any
   })).filter((a: any) => a.kind !== "detail" || (a.detail_field && a.detail_value));

@@ -294,6 +294,32 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
 @media (max-width: 860px) {
   .grid2, .person-grid { grid-template-columns: minmax(0, 1fr); }
 }
+/* Circle map: you in the middle, rings drawn as nested circles, people placed by percentage
+   so the whole map scales with its square. */
+.map-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; align-items: start; }
+@media (max-width: 980px) { .map-layout { grid-template-columns: minmax(0, 1fr); } }
+.circle-map { position: relative; width: 100%; max-width: 680px; aspect-ratio: 1; margin: 0 auto; }
+.circle-map .ring { position: absolute; border-radius: 50%; border: 1px solid var(--line); transform: translate(-50%, -50%); left: 50%; top: 50%; }
+.circle-map .ring:nth-child(odd) { background: var(--panel-2); }
+.circle-map .ring-label { position: absolute; left: 50%; transform: translate(-50%, -50%); font-size: 11px; font-weight: 600; color: var(--ink-3);
+  background: var(--panel); padding: 0 6px; border-radius: 999px;
+  letter-spacing: .02em; white-space: nowrap; pointer-events: none; }
+.circle-map .me { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 16%; aspect-ratio: 1; border-radius: 50%;
+  background: var(--accent); color: var(--accent-ink, #fff); display: grid; place-items: center; font-weight: 700; font-size: 13px; }
+.circle-map svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.map-dot { position: absolute; transform: translate(-50%, -50%); padding: 0; border: 0; background: none; cursor: pointer; border-radius: 50%; }
+.map-dot .avatar { width: 100%; height: 100%; font-size: 10px; box-shadow: 0 0 0 2px var(--panel); }
+.map-dot.closer .avatar { box-shadow: 0 0 0 2px var(--accent); }
+.map-dot.space { opacity: .55; }
+.map-dot:hover, .map-dot:focus-visible { z-index: 2; }
+.map-dot:hover .avatar, .map-dot:focus-visible .avatar { box-shadow: 0 0 0 3px var(--accent); }
+.map-key { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-top: 10px; font-size: 12px; color: var(--ink-3); }
+.choice-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.choice-row label { display: inline-flex; }
+.choice-row input { position: absolute; opacity: 0; pointer-events: none; }
+.choice-row span { padding: 5px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel-2); font-size: 13px; cursor: pointer; }
+.choice-row input:checked + span { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.choice-row input:focus-visible + span { outline: 2px solid var(--accent); }
 .tabbar { display: none; }
 @media (max-width: 720px) {
   .app { grid-template-columns: 1fr; }
@@ -392,7 +418,32 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8"/><path d="M18 14.8c2 .7 3.2 2.4 3.5 5.2"/></svg>
     People
   </button>
+  <button data-tab="map">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><circle cx="12" cy="12" r="5.5"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>
+    Map
+  </button>
 </nav>
+
+<!-- Where someone is in your circle, and which way you want it to go -->
+<dialog id="closeDlg">
+  <form id="closeForm">
+    <div style="display:flex;gap:12px;align-items:center"><div id="closeAvatar"></div><h3 id="closeTitle" style="margin:0">Closeness</h3></div>
+    <div class="stack" style="gap:6px"><strong class="small">Where they are in your circle now</strong>
+      <div class="choice-row" id="closeRings"></div></div>
+    <div class="stack" style="gap:6px"><strong class="small">Where you want it to go</strong>
+      <div class="choice-row">
+        <label><input type="radio" name="direction" value="closer"><span>↑ Draw closer</span></label>
+        <label><input type="radio" name="direction" value=""><span>Steady</span></label>
+        <label><input type="radio" name="direction" value="space"><span>↓ Give space</span></label>
+      </div></div>
+    <label class="field"><span>Why (just for you)</span><textarea name="why" rows="2" placeholder="e.g. We really click; I want to invest in this"></textarea></label>
+    <div class="dlg-actions">
+      <button type="button" class="btn ghost" id="closeOpen">Open their page</button>
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="submit" class="btn primary">Save</button>
+    </div>
+  </form>
+</dialog>
 
 <!-- Person dialog -->
 <dialog id="personDlg">
@@ -810,6 +861,10 @@ const EV_TYPES = {
   hardship: ['🌧️', 'Job loss / hard time'], other: ['📌', 'Other']
 };
 const REMIND_DAYS = 30;
+// The rings of your circle, from the centre out (key → label), and which way you want a
+// relationship to go. Keep in step with RINGS / DIRECTIONS in supabase/functions/_shared/circle.ts.
+const RINGS = { inner: 'Inner circle', close: 'Close', connected: 'Connected', wider: 'Wider circle', acquaint: 'Acquaintances' };
+const DIRECTIONS = { closer: 'Draw closer', space: 'Give space' };
 // Family relations. `rev` is the same link seen from the other person's side.
 const FAMILY_REL = {
   spouse: { label: 'Spouse', rev: 'spouse' }, partner: { label: 'Partner', rev: 'partner' },
@@ -929,6 +984,10 @@ function normalize(d) {
     p.familyMembers ||= [];
     p.familyMembers.forEach(m => { m.id ||= uid(); if (!FAMILY_REL[m.rel]) m.rel = 'other'; });
     p.contactEvery = Number(p.contactEvery) || 0;
+    // Closeness: which ring of your circle they're in now, and which way you want it to go.
+    if (!RINGS[p.closeness]) p.closeness = '';
+    if (!DIRECTIONS[p.direction]) p.direction = '';
+    p.closenessWhy = String(p.closenessWhy || '');
     p.events.forEach(e => { e.id ||= uid(); e.visibility ||= 'auto'; });
   });
   const ids = new Set(d.people.map(p => p.id));
@@ -1359,7 +1418,7 @@ function renderList() {
 function render() {
   renderList();
   const p = ui.selected && getPerson(ui.selected);
-  if (!p) { ui.selected = null; renderHome(); } else renderPerson(p);
+  if (!p) { ui.selected = null; if (ui.tab === 'map') renderMap(); else renderHome(); } else renderPerson(p);
   document.body.classList.toggle('show-detail', !!p);
   document.body.classList.toggle('tab-people', ui.tab === 'people');
   document.querySelectorAll('.tabbar [data-tab]').forEach(b => {
@@ -1367,6 +1426,134 @@ function render() {
   });
   hydratePhotos($('#main'));
 }
+
+// ---------- Circle map ----------
+// You in the middle; each ring a band of the circle, people spread evenly around it (in more
+// rows when it's crowded), leaving a gap at the top for the ring's name. Positions are
+// percentages of the square, so the map scales from a phone to a wide screen.
+const RING_EDGES = [0.16, 0.30, 0.45, 0.60, 0.76, 0.91]; // radii, as a share of half the width
+function mapShown(p) {
+  const f = ui.mapFilter || '';
+  if (!p.closeness) return false;
+  if (f === 'closer' || f === 'space') return p.direction === f;
+  if (f.startsWith('rel:')) return p.relationship === f.slice(4);
+  return true;
+}
+function renderMap() {
+  const main = $('#main');
+  const placed = data.people.filter(p => p.closeness);
+  const shown = placed.filter(mapShown);
+  const keys = Object.keys(RINGS);
+  const dots = [], arrows = [];
+  keys.forEach((k, i) => {
+    const people = shown.filter(p => p.closeness === k)
+      .sort((a, b) => ['closer', '', 'space'].indexOf(a.direction) - ['closer', '', 'space'].indexOf(b.direction) || a.name.localeCompare(b.name));
+    if (!people.length) return;
+    const inR = RING_EDGES[i], outR = RING_EDGES[i + 1], mid = (inR + outR) / 2;
+    const GAP = 48 * Math.PI / 180; // left free at the top for the ring's name
+    let size = 5.6; // dot diameter, % of the width
+    const capAt = r => Math.max(1, Math.floor((2 * Math.PI - GAP) * r * 50 / (size * 1.15)));
+    let rows = Math.min(3, Math.ceil(people.length / capAt(mid)));
+    if (people.length > capAt(mid) * 3) { size *= Math.sqrt(capAt(mid) * 3 / people.length); rows = 3; }
+    const rowGap = (outR - inR) * 0.32;
+    for (let row = 0; row < rows; row++) {
+      const inRow = people.filter((_, j) => j % rows === row);
+      const r = mid + (row - (rows - 1) / 2) * rowGap;
+      inRow.forEach((p, j) => {
+        const a = -Math.PI / 2 + GAP / 2 + (2 * Math.PI - GAP) * (j + 0.5 + (row % 2) * 0.5) / inRow.length;
+        const x = 50 + r * 50 * Math.cos(a), y = 50 + r * 50 * Math.sin(a);
+        dots.push(`<button type="button" class="map-dot ${p.direction}" data-closeness="${p.id}" title="${esc(p.name)}${p.direction ? ` · ${DIRECTIONS[p.direction]}` : ''}"
+          style="left:${x.toFixed(2)}%;top:${y.toFixed(2)}%;width:${size.toFixed(2)}%;aspect-ratio:1" aria-label="${esc(p.name)}, ${RINGS[k]}${p.direction ? `, ${DIRECTIONS[p.direction]}` : ''}">${avatar(p)}</button>`);
+        if (p.direction) {
+          // A short arrow just beside the dot: towards the middle to draw closer, outwards to give space.
+          const ux = Math.cos(a), uy = Math.sin(a), sign = p.direction === 'closer' ? -1 : 1, start = size / 2 + 0.6, len = 3.4;
+          const sx = x + sign * ux * start, sy = y + sign * uy * start;
+          arrows.push(`<line x1="${sx.toFixed(2)}" y1="${sy.toFixed(2)}" x2="${(sx + sign * ux * len).toFixed(2)}" y2="${(sy + sign * uy * len).toFixed(2)}"
+            class="${p.direction}" marker-end="url(#arrow-${p.direction})"/>`);
+        }
+      });
+    }
+  });
+  const rings = keys.map((k, i) => `<div class="ring" style="width:${RING_EDGES[i + 1] * 100}%;height:${RING_EDGES[i + 1] * 100}%"></div>`).reverse().join('');
+  const labels = keys.map((k, i) => `<div class="ring-label" style="top:${(50 - (RING_EDGES[i] + RING_EDGES[i + 1]) / 2 * 50).toFixed(2)}%">${RINGS[k]}</div>`).join('');
+  const closer = placed.filter(p => p.direction === 'closer').length, space = placed.filter(p => p.direction === 'space').length;
+  const rels = [...new Set(placed.map(p => p.relationship).filter(Boolean))].sort();
+  const filterOpts = [['', 'Everyone placed'], ['closer', 'Drawing closer'], ['space', 'Giving space'], ...rels.map(r => [`rel:${r}`, r])]
+    .map(([v, l]) => `<option value="${esc(v)}" ${v === (ui.mapFilter || '') ? 'selected' : ''}>${esc(l)}</option>`).join('');
+  const q = (ui.mapSearch || '').toLowerCase();
+  const unplaced = data.people.filter(p => !p.closeness && (!q || p.name.toLowerCase().includes(q)))
+    .sort((a, b) => (lastContact(b) || '').localeCompare(lastContact(a) || '') || a.name.localeCompare(b.name));
+  const allUnplaced = data.people.filter(p => !p.closeness).length;
+  main.innerHTML = `<div class="wrap">
+    <div class="home-head">
+      <div><h1>Your circle</h1><div class="muted">${placed.length} placed${closer ? ` · ${closer} drawing closer` : ''}${space ? ` · ${space} giving space` : ''}</div></div>
+      <div class="p-actions"><select id="mapFilter" aria-label="Show on the map">${filterOpts}</select></div>
+    </div>
+    <div class="map-layout">
+      <div>
+        <div class="circle-map">
+          ${rings}${labels}
+          <svg viewBox="0 0 100 100" aria-hidden="true">
+            <defs>
+              <marker id="arrow-closer" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto"><path d="M0 0L10 5L0 10z" style="fill:var(--accent)"/></marker>
+              <marker id="arrow-space" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto"><path d="M0 0L10 5L0 10z" style="fill:var(--ink-3)"/></marker>
+            </defs>
+            <g stroke-width="0.6" stroke-linecap="round">${arrows.join('').replace(/class="closer"/g, 'style="stroke:var(--accent)"').replace(/class="space"/g, 'style="stroke:var(--ink-3)"')}</g>
+          </svg>
+          <div class="me">You</div>
+          ${dots.join('')}
+        </div>
+        <div class="map-key"><span><span style="color:var(--accent)">↑</span> Drawing closer</span><span>↓ Giving space (faded)</span><span>Tap anyone to change where they are</span></div>
+        ${placed.length ? '' : '<p class="muted small" style="text-align:center">No one is placed yet. Start with the people on the right (or below): tap Place to put them in a ring.</p>'}
+      </div>
+      <section class="card"><h2>Not placed yet · ${allUnplaced}</h2>
+        <input type="search" id="mapSearch" placeholder="Find someone…" value="${esc(ui.mapSearch || '')}" aria-label="Find someone to place" style="margin-bottom:8px">
+        <ul class="list">${unplaced.slice(0, 40).map(p => `<li>${avatar(p)}<div class="grow">${esc(p.name)}<div class="small muted">${esc(p.relationship || '')}${lastContact(p) ? ` · talked ${ago(daysSince(lastContact(p)))}` : ''}</div></div>
+          <button type="button" class="btn small" data-closeness="${p.id}">Place</button></li>`).join('') || '<li class="small muted">Everyone is placed.</li>'}</ul>
+        ${unplaced.length > 40 ? `<p class="small muted" style="margin:8px 0 0">and ${unplaced.length - 40} more: search to find them</p>` : ''}
+        <p class="small muted" style="margin:8px 0 0">People you've talked to most recently are first.</p>
+      </section>
+    </div>
+  </div>`;
+}
+document.addEventListener('change', e => { if (e.target.id === 'mapFilter') { ui.mapFilter = e.target.value; render(); } });
+document.addEventListener('input', e => {
+  if (e.target.id !== 'mapSearch') return;
+  ui.mapSearch = e.target.value;
+  const pos = e.target.selectionStart;
+  render();
+  const s = $('#mapSearch'); s.focus(); s.setSelectionRange(pos, pos);
+});
+
+// Placing someone: their ring now, the direction you want, and a private note on why.
+let closeFor = null;
+function openCloseness(p) {
+  closeFor = p;
+  const f = $('#closeForm');
+  $('#closeTitle').textContent = p.name;
+  $('#closeAvatar').innerHTML = avatar(p);
+  hydratePhotos($('#closeAvatar'));
+  $('#closeRings').innerHTML = Object.entries(RINGS).map(([k, l]) => `<label><input type="radio" name="ring" value="${k}" ${p.closeness === k ? 'checked' : ''}><span>${l}</span></label>`).join('')
+    + `<label><input type="radio" name="ring" value="" ${!p.closeness ? 'checked' : ''}><span>Not placed</span></label>`;
+  f.direction.value = p.direction || '';
+  f.why.value = p.closenessWhy || '';
+  $('#closeDlg').showModal();
+}
+$('#closeForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const f = e.target, p = closeFor;
+  p.closeness = f.ring.value;
+  p.direction = f.direction.value;
+  p.closenessWhy = f.why.value.trim();
+  $('#closeDlg').close();
+  save(); render();
+  toast(p.closeness ? `${p.name}: ${RINGS[p.closeness]}${p.direction ? ` · ${DIRECTIONS[p.direction].toLowerCase()}` : ''}.` : `${p.name} is no longer on the map.`);
+});
+$('#closeOpen').addEventListener('click', () => { $('#closeDlg').close(); select(closeFor.id); });
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-closeness]');
+  if (b) openCloseness(getPerson(b.dataset.closeness));
+});
 
 function personLink(p) { return `<button class="linkish" data-open="${p.id}">${esc(p.name)}</button>`; }
 function followUpRow(f, exceptId) {
@@ -1469,6 +1656,7 @@ function renderHome() {
     <div class="home-head">
       <div><h1>Hello again</h1><div class="muted">${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })} · ${data.people.length} ${data.people.length === 1 ? 'person' : 'people'} in your circle</div></div>
       <div class="p-actions">
+        <button class="btn" data-act="openMap">◎ Circle map</button>
         <button class="btn" data-act="eventAny">Note a life event</button>
         <button class="btn primary" data-act="logAny">Log a conversation</button>
       </div>
@@ -1516,6 +1704,7 @@ function renderHome() {
 function renderPerson(p) {
   const last = lastContact(p);
   const chips = [`<span class="pill accent">${esc(p.relationship || 'Other')}</span>`,
+    `<button type="button" class="pill" data-closeness="${p.id}" title="Where they are in your circle">◎ ${p.closeness ? `${RINGS[p.closeness]}${p.direction === 'closer' ? ' · ↑ closer' : p.direction === 'space' ? ' · ↓ space' : ''}` : 'Place in your circle'}</button>`,
     ...p.tags.map(t => `<button type="button" class="pill" data-tag-filter="${esc(t.toLowerCase())}" title="Show everyone tagged ${esc(t)}">#${esc(t)}</button>`)];
   const over = overdueBy(p);
   const statBits = [last ? `Last talked ${ago(daysSince(last))}` : 'No conversations yet'];
@@ -2345,8 +2534,12 @@ function quickNoteCard() {
 const SOURCE_LABEL = { 'quick-note': 'Quick note', voice: 'Voice note', share: 'Shared', screenshot: 'Screenshot', claude: 'From Claude' };
 const RV_KIND = { conversation: 'Log conversation', follow_up: 'Follow-up', life_event: 'Life event', note: 'Add to notes', detail: 'Update contact details' };
 // Contact details a suggestion can set. Keep in step with DETAIL_FIELDS in supabase/functions/capture.
-const DETAIL_FIELDS = { birthday: 'Birthday', phone: 'Phone', email: 'Email', address: 'Address', company: 'Company', job_title: 'Job title', nickname: 'Nickname' };
-const detailText = a => a.detail_field === 'birthday' ? (() => { const [y, m, d] = a.detail_value.length === 5 ? [0, ...a.detail_value.split('-').map(Number)] : a.detail_value.split('-').map(Number);
+const DETAIL_FIELDS = { birthday: 'Birthday', phone: 'Phone', email: 'Email', address: 'Address', company: 'Company', job_title: 'Job title', nickname: 'Nickname',
+  closeness: 'Place in your circle', direction: 'Direction' };
+const DIRECTION_TEXT = { ...DIRECTIONS, steady: 'Steady' };
+const detailText = a => a.detail_field === 'closeness' ? RINGS[a.detail_value] || a.detail_value
+  : a.detail_field === 'direction' ? DIRECTION_TEXT[a.detail_value] || a.detail_value
+  : a.detail_field === 'birthday' ? (() => { const [y, m, d] = a.detail_value.length === 5 ? [0, ...a.detail_value.split('-').map(Number)] : a.detail_value.split('-').map(Number);
   return new Date(2000, m - 1, d).toLocaleDateString(undefined, { month: 'long', day: 'numeric' }) + (y ? `, ${y}` : ''); })() : a.detail_value.replace(/\n/g, ', ');
 function refName(ref) { const p = ref.id && getPerson(ref.id); return p ? p.name : `${ref.name || 'Someone'} (new)`; }
 function describeAction(a) {
@@ -2367,6 +2560,8 @@ function applyDetail(p, a) {
   else if (a.detail_field === 'company') p.company = v;
   else if (a.detail_field === 'job_title') p.jobTitle = v;
   else if (a.detail_field === 'nickname') p.nickname = v;
+  else if (a.detail_field === 'closeness') { if (RINGS[v]) p.closeness = v; }
+  else if (a.detail_field === 'direction') { if (DIRECTION_TEXT[v]) p.direction = v === 'steady' ? '' : v; }
   else if (a.detail_field === 'phone') add(p.phones, { label: MULTI.phones.labels.includes(a.detail_label) ? a.detail_label : 'Mobile', value: v }, digitsOf);
   else if (a.detail_field === 'email') add(p.emails, { label: MULTI.emails.labels.includes(a.detail_label) ? a.detail_label : 'Personal', value: v }, x => x.toLowerCase());
   else if (a.detail_field === 'address') add(p.addresses, { label: a.detail_label || 'Home', value: v }, x => x.toLowerCase().replace(/\s+/g, ' '));
@@ -2487,7 +2682,9 @@ function openReview(row) {
     if (a.kind === 'note') rest = field('Note', `<textarea data-k="note" rows="2">${esc(a.note)}</textarea>`);
     if (a.kind === 'detail') rest = `<div class="field-row">${field('Detail', `<select data-k="detail_field">${Object.entries(DETAIL_FIELDS).map(([k, l]) => `<option value="${k}" ${k === a.detail_field ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}`
       + `${field('Label', `<input type="text" data-k="detail_label" value="${esc(a.detail_label)}" placeholder="e.g. Mobile, Home">`)}</div>`
-      + field(a.detail_field === 'birthday' ? 'Value (YYYY-MM-DD, or MM-DD without the year)' : 'Value', `<textarea data-k="detail_value" rows="${a.detail_field === 'address' ? 3 : 1}">${esc(a.detail_value)}</textarea>`);
+      + (a.detail_field === 'closeness' || a.detail_field === 'direction'
+        ? field('Value', `<select data-k="detail_value">${Object.entries(a.detail_field === 'closeness' ? RINGS : DIRECTION_TEXT).map(([k, l]) => `<option value="${k}" ${k === a.detail_value ? 'selected' : ''}>${l}</option>`).join('')}</select>`)
+        : field(a.detail_field === 'birthday' ? 'Value (YYYY-MM-DD, or MM-DD without the year)' : 'Value', `<textarea data-k="detail_value" rows="${a.detail_field === 'address' ? 3 : 1}">${esc(a.detail_value)}</textarea>`));
     return `<div class="rv-action" data-i="${i}"><label class="rv-head"><input type="checkbox" data-rv-on checked> ${RV_KIND[a.kind] || 'Change'}</label>
       <div class="rv-fields stack" style="gap:8px">${people}${rest}</div></div>`;
   }).join('');
@@ -3351,6 +3548,7 @@ const actions = {
   addPerson: () => openPersonDlg(),
   editPerson: () => openPersonDlg(getPerson(ui.selected)),
   delPerson: () => openDelete(getPerson(ui.selected)),
+  openMap: () => { ui.tab = 'map'; select(null); },
   addEvent: () => openEvDlg(ui.selected),
   addFamily: () => openFamDlg(),
   addFollowUp: () => openFuDlg(ui.selected || null),
