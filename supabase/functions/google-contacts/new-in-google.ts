@@ -48,7 +48,7 @@ export function newInGoogle(contacts: Any[], links: Link[], people: Any[], seen:
 // A new Circle person made from a Google contact, in the shape Circle's app expects.
 export function personFromGoogle(g: Any, id: string, relationship: string, today: string): Any {
   const p: Any = {
-    id, relationship, createdAt: today, firstName: "", lastName: "", name: "", nickname: "", company: "", jobTitle: "", birthday: "",
+    id, relationship, createdAt: today, source: "google", firstName: "", lastName: "", name: "", nickname: "", company: "", jobTitle: "", birthday: "",
     phones: [], emails: [], addresses: [], links: [], interests: [], tags: [], events: [], familyMembers: [], notes: "", contactEvery: 0,
   };
   const v = R.fromGoogle(g);

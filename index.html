@@ -865,6 +865,10 @@ const REMIND_DAYS = 30;
 // relationship to go. Keep in step with RINGS / DIRECTIONS in supabase/functions/_shared/circle.ts.
 const RINGS = { inner: 'Inner circle', close: 'Close', connected: 'Connected', wider: 'Wider circle', acquaint: 'Acquaintances' };
 const DIRECTIONS = { closer: 'Draw closer', space: 'Give space' };
+// How a person first arrived in Circle, shown on their page beside the date they were added.
+const SOURCE_TEXT = { circle: 'added in Circle', google: 'from Google Contacts', import: 'imported from a contacts file',
+  note: 'from a note in your Inbox', 'gmail-import': 'from your original Gmail import' };
+const GMAIL_IMPORT_DAY = '2026-10-23';
 // Family relations. `rev` is the same link seen from the other person's side.
 const FAMILY_REL = {
   spouse: { label: 'Spouse', rev: 'spouse' }, partner: { label: 'Partner', rev: 'partner' },
@@ -988,6 +992,10 @@ function normalize(d) {
     if (!RINGS[p.closeness]) p.closeness = '';
     if (!DIRECTIONS[p.direction]) p.direction = '';
     p.closenessWhy = String(p.closenessWhy || '');
+    // Where they came from (see SOURCE_TEXT). Everyone dated the day of the original Gmail
+    // import, before sources were recorded, came from that import.
+    if (!p.source && p.createdAt === GMAIL_IMPORT_DAY) p.source = 'gmail-import';
+    if (!SOURCE_TEXT[p.source]) p.source = '';
     p.events.forEach(e => { e.id ||= uid(); e.visibility ||= 'auto'; });
   });
   const ids = new Set(d.people.map(p => p.id));
@@ -1732,6 +1740,7 @@ function renderPerson(p) {
     fact('Birthday', b ? fmtBirthday(b) : ''),
     ...p.addresses.map(x => fact(`${esc(x.label)} address`, esc(x.value))),
     fact('How we met', esc(p.howMet)),
+    fact('Added', [p.createdAt ? fmtDate(p.createdAt) : '', SOURCE_TEXT[p.source] || ''].filter(Boolean).map(esc).join(' · ')),
     fact('Check in', p.contactEvery ? esc(CHECKIN_LABEL[p.contactEvery] || `Every ${p.contactEvery} days`) : ''),
   ].join('');
 
@@ -1992,7 +2001,8 @@ $('#personForm').addEventListener('submit', async e => {
   vals.tags = standardTags(splitList(f.tags.value));
   let p = f.dataset.id && getPerson(f.dataset.id);
   if (p) Object.assign(p, vals);
-  else { p = { id: uid(), events: [], createdAt: todayStr(), ...vals }; data.people.push(p); }
+  // A new person goes through normalize, so every list (family, addresses…) exists before their page is drawn.
+  else { p = normalize({ people: [{ id: uid(), events: [], createdAt: todayStr(), source: 'circle', ...vals }] }).people[0]; data.people.push(p); }
   p.name = fullName(p);
   if (photoEdit) {
     const btn = f.querySelector('button[type=submit]');
@@ -2069,7 +2079,7 @@ function promoteMember(p, id) {
   const parts = m.name.split(/\s+/).filter(Boolean);
   const q = normalize({ people: [{
     id: uid(), firstName: parts.length > 1 ? parts.slice(0, -1).join(' ') : parts[0] || '', lastName: parts.length > 1 ? parts.at(-1) : '',
-    relationship: p.relationship === 'Family' ? 'Family' : 'Other', birthday: m.birthday, notes: m.note || '', events: [], createdAt: todayStr(),
+    relationship: p.relationship === 'Family' ? 'Family' : 'Other', birthday: m.birthday, notes: m.note || '', events: [], createdAt: todayStr(), source: 'circle',
   }] }).people[0];
   data.people.push(q);
   data.relations.push({ id: uid(), from: p.id, to: q.id, type: m.rel });
@@ -2449,7 +2459,7 @@ $('#impForm').addEventListener('submit', async e => {
   const withPhotos = [];
   for (const { c, match } of chosen) {
     if (match) { mergeContact(match, c); updated++; if (c.photo && !match.photo) withPhotos.push({ p: match, c }); continue; }
-    const p = normalize({ people: [{ id: uid(), relationship: rel, createdAt: todayStr(), ...c,
+    const p = normalize({ people: [{ id: uid(), relationship: rel, createdAt: todayStr(), source: 'import', ...c,
       events: c.events.map(ev => ({ id: uid(), visibility: 'auto', notes: '', ...ev })), photo: undefined }] }).people[0];
     data.people.push(p);
     added++;
@@ -2606,7 +2616,7 @@ function applyActions(actions) {
     if (!created.has(key)) {
       const parts = name.split(/\s+/);
       const p = normalize({ people: [{ id: uid(), firstName: parts.length > 1 ? parts.slice(0, -1).join(' ') : parts[0], lastName: parts.length > 1 ? parts.at(-1) : '',
-        relationship: 'Friend', events: [], createdAt: todayStr() }] }).people[0];
+        relationship: 'Friend', events: [], createdAt: todayStr(), source: 'note' }] }).people[0];
       data.people.push(p);
       created.set(key, p.id);
     }
