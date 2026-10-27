@@ -3075,12 +3075,14 @@ function toggleTheme() {
 
 // ---------- Event wiring ----------
 function select(id) { ui.selected = id; ui.tl = 'all'; render(); $('#main').scrollTop = 0; }
-// The Circle logo is "start over": Home, with the search cleared so the full list is back.
+// The Circle logo is "start over": Home, with the search cleared so the full list is back,
+// and a fresh check of the server (changes from other devices, the Inbox, the calendar).
 $('#brand').addEventListener('click', () => {
   ui.tab = 'home';
   ui.search = ''; $('#search').value = '';
   select(null);
   renderList();
+  syncNow();
 });
 // Phone tab bar: Home or People. Tapping a tab also closes any open person.
 document.querySelector('.tabbar').addEventListener('click', e => {
