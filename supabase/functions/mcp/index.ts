@@ -163,8 +163,13 @@ async function callTool(name: string, args: Record<string, unknown>, db: Supabas
     if (!res.ok || !row) return { text: `Couldn't add the note: ${row?.error ?? res.statusText}`, isError: true };
     if (row.status === "error") return { text: `The note was saved to the Circle Inbox, but sorting it failed (${row.error}). The user can tap "Try again" there.` };
     const actions = row.suggestion?.actions ?? [];
-    const lines = actions.map((a: { kind: string; people: { name: string }[]; summary: string; follow_up_text: string; due: string; title: string; note: string }) =>
-      `- ${a.kind.replace("_", " ")}${a.people.length ? ` for ${a.people.map((x) => x.name).join(" & ")}` : " (person to be chosen)"}: ${a.summary || a.follow_up_text || a.title || a.note}${a.due ? ` (by ${a.due})` : ""}`);
+    type Action = { kind: string; people: { name: string }[]; summary: string; follow_up_text: string; due: string; title: string; note: string; detail_field?: string; detail_value?: string; detail_label?: string };
+    // A contact-detail change reads as "detail for Jim: birthday → 03-12" (MM-DD when no year was given).
+    const what = (a: Action) => a.kind === "detail"
+      ? `${String(a.detail_field ?? "").replace("_", " ")}${a.detail_label ? ` (${a.detail_label})` : ""} → ${String(a.detail_value ?? "").replace(/\n/g, ", ")}`
+      : a.summary || a.follow_up_text || a.title || a.note;
+    const lines = actions.map((a: Action) =>
+      `- ${a.kind.replace("_", " ")}${a.people.length ? ` for ${a.people.map((x) => x.name).join(" & ")}` : " (person to be chosen)"}: ${what(a)}${a.due ? ` (by ${a.due})` : ""}`);
     return { text: `Added to the Circle Inbox for the user to review and approve in the Circle app.${lines.length ? `\nSuggested updates:\n${lines.join("\n")}` : "\nNo specific updates were suggested."}` };
   }
 
