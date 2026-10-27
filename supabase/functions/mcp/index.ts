@@ -47,7 +47,7 @@ const TOOLS = [
   {
     name: "add_note",
     title: "Add a note to the Circle Inbox",
-    description: "Send a note to the user's Circle Inbox, where it's sorted into suggested updates (conversations, follow-ups with dates, life events, facts) that the user reviews and approves in the Circle app. Use it when the user wants to record something about someone, e.g. 'I just spoke with Tiz, he's having a hard week, follow up Sunday'. Pass the user's note in their own words, including names and any dates. Nothing in Circle changes until they approve it.",
+    description: "Send a note to the user's Circle Inbox, where it's sorted into suggested updates (conversations, follow-ups with dates, life events, facts, and contact details such as a birthday, phone number, email, address, company or job title) that the user reviews and approves in the Circle app. Use it when the user wants to record something about someone, e.g. 'I just spoke with Tiz, he's having a hard week, follow up Sunday'. Pass the user's note in their own words, including names and any dates. Nothing in Circle changes until they approve it.",
     inputSchema: { type: "object", properties: { note: { type: "string", description: "The note, in the user's own words" } }, required: ["note"] },
     annotations: { readOnlyHint: false, destructiveHint: false },
   },

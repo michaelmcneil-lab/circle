@@ -2305,14 +2305,33 @@ function quickNoteCard() {
   </section>`;
 }
 const SOURCE_LABEL = { 'quick-note': 'Quick note', voice: 'Voice note', share: 'Shared', screenshot: 'Screenshot', claude: 'From Claude' };
-const RV_KIND = { conversation: 'Log conversation', follow_up: 'Follow-up', life_event: 'Life event', note: 'Add to notes' };
+const RV_KIND = { conversation: 'Log conversation', follow_up: 'Follow-up', life_event: 'Life event', note: 'Add to notes', detail: 'Update contact details' };
+// Contact details a suggestion can set. Keep in step with DETAIL_FIELDS in supabase/functions/capture.
+const DETAIL_FIELDS = { birthday: 'Birthday', phone: 'Phone', email: 'Email', address: 'Address', company: 'Company', job_title: 'Job title', nickname: 'Nickname' };
+const detailText = a => a.detail_field === 'birthday' ? (() => { const [y, m, d] = a.detail_value.length === 5 ? [0, ...a.detail_value.split('-').map(Number)] : a.detail_value.split('-').map(Number);
+  return new Date(2000, m - 1, d).toLocaleDateString(undefined, { month: 'long', day: 'numeric' }) + (y ? `, ${y}` : ''); })() : a.detail_value.replace(/\n/g, ', ');
 function refName(ref) { const p = ref.id && getPerson(ref.id); return p ? p.name : `${ref.name || 'Someone'} (new)`; }
 function describeAction(a) {
   const who = a.people.length ? esc(a.people.map(refName).join(' & ')) : '<em>someone</em>';
   if (a.kind === 'conversation') return `${IX_TYPES[a.interaction_type]?.[0] || '💬'} <strong>${who}</strong>${a.date && a.date !== todayStr() ? ` · ${fmtDay(a.date)}` : ''}: ${esc(a.summary)}`;
   if (a.kind === 'follow_up') return `✅ Follow up with <strong>${who}</strong>${a.due ? ` by <strong>${fmtDay(a.due)}</strong>` : ''}: ${esc(a.follow_up_text)}`;
   if (a.kind === 'life_event') return `${EV_TYPES[a.event_type]?.[0] || '📌'} <strong>${who}</strong>: ${esc(a.title)}${a.until ? ` · top of mind until ${fmtDay(a.until)}` : ''}`;
+  if (a.kind === 'detail') return `🗂️ <strong>${who}</strong>: ${esc(DETAIL_FIELDS[a.detail_field] || 'Detail')}${a.detail_label ? ` (${esc(a.detail_label)})` : ''} → ${esc(detailText(a))}`;
   return `📝 Note for <strong>${who}</strong>: ${esc(a.note)}`;
+}
+// Sets a contact detail on a person. Lists (phones, emails, addresses) gain the new entry
+// unless it's already there; single details are replaced.
+function applyDetail(p, a) {
+  const v = String(a.detail_value || '').trim();
+  if (!v) return;
+  const add = (list, item, key) => { if (!list.some(x => key(x.value) === key(item.value))) list.push(item); };
+  if (a.detail_field === 'birthday') { if (/^(\d{4}-)?\d{2}-\d{2}$/.test(v)) p.birthday = v; }
+  else if (a.detail_field === 'company') p.company = v;
+  else if (a.detail_field === 'job_title') p.jobTitle = v;
+  else if (a.detail_field === 'nickname') p.nickname = v;
+  else if (a.detail_field === 'phone') add(p.phones, { label: MULTI.phones.labels.includes(a.detail_label) ? a.detail_label : 'Mobile', value: v }, digitsOf);
+  else if (a.detail_field === 'email') add(p.emails, { label: MULTI.emails.labels.includes(a.detail_label) ? a.detail_label : 'Personal', value: v }, x => x.toLowerCase());
+  else if (a.detail_field === 'address') add(p.addresses, { label: a.detail_label || 'Home', value: v }, x => x.toLowerCase().replace(/\s+/g, ' '));
 }
 function inboxCard() {
   const queued = loadQueue();
@@ -2379,6 +2398,8 @@ function applyActions(actions) {
         title: a.title, notes: a.note || '', howToShowUp: a.how_to_show_up || '', until: a.until || '', visibility: 'auto', recurring: false });
     } else if (a.kind === 'note' && a.note) {
       for (const id of ids) { const p = getPerson(id); p.notes = [p.notes, `${fmtDate(today)}: ${a.note}`].filter(Boolean).join('\n'); }
+    } else if (a.kind === 'detail' && DETAIL_FIELDS[a.detail_field]) {
+      for (const id of ids) applyDetail(getPerson(id), a);
     }
   }
   return { people: [...touched].map(id => getPerson(id).name), created: created.size };
@@ -2426,6 +2447,9 @@ function openReview(row) {
       + field('How to show up', `<textarea data-k="how_to_show_up" rows="2">${esc(a.how_to_show_up)}</textarea>`)
       + field('What they shared', `<textarea data-k="note" rows="2">${esc(a.note)}</textarea>`);
     if (a.kind === 'note') rest = field('Note', `<textarea data-k="note" rows="2">${esc(a.note)}</textarea>`);
+    if (a.kind === 'detail') rest = `<div class="field-row">${field('Detail', `<select data-k="detail_field">${Object.entries(DETAIL_FIELDS).map(([k, l]) => `<option value="${k}" ${k === a.detail_field ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}`
+      + `${field('Label', `<input type="text" data-k="detail_label" value="${esc(a.detail_label)}" placeholder="e.g. Mobile, Home">`)}</div>`
+      + field(a.detail_field === 'birthday' ? 'Value (YYYY-MM-DD, or MM-DD without the year)' : 'Value', `<textarea data-k="detail_value" rows="${a.detail_field === 'address' ? 3 : 1}">${esc(a.detail_value)}</textarea>`);
     return `<div class="rv-action" data-i="${i}"><label class="rv-head"><input type="checkbox" data-rv-on checked> ${RV_KIND[a.kind] || 'Change'}</label>
       <div class="rv-fields stack" style="gap:8px">${people}${rest}</div></div>`;
   }).join('');
