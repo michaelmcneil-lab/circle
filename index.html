@@ -113,6 +113,15 @@ aside.side { border-right: 1px solid var(--line); background: var(--panel); disp
 .side-tools { padding: 12px; display: grid; gap: 8px; border-bottom: 1px solid var(--line); }
 .side-tools .row { display: flex; gap: 8px; }
 .side-tools select { flex: 1; min-width: 0; }
+/* Tags as tappable chips: the filter strip under the search box, and suggestions under a contact's Tags box. */
+.tag-strip { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.tag-strip::-webkit-scrollbar { display: none; }
+.tag-chip { font: inherit; font-size: 12.5px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel-2);
+  color: var(--ink-2); white-space: nowrap; cursor: pointer; flex: none; }
+.tag-chip .n { color: var(--ink-3); margin-left: 4px; }
+.tag-chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.tag-suggest { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+button.pill { font: inherit; font-size: 12px; cursor: pointer; }
 input[type=search], input[type=text], input[type=date], input[type=email], input[type=tel], input[type=number], input[type=password], select, textarea {
   width: 100%; border: 1px solid var(--line); background: var(--panel-2); border-radius: 8px; padding: 7px 10px;
 }
@@ -368,6 +377,7 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
           <option value="overdue">Needs a check-in</option>
         </select>
       </div>
+      <div class="tag-strip" id="tagStrip" role="group" aria-label="Filter by tag" hidden></div>
     </div>
     <div class="people" id="people"></div>
   </aside>
@@ -445,7 +455,8 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
     <label class="field"><span>Family notes</span><textarea name="family" rows="2" style="min-height:0" placeholder="Anything else about their family"></textarea>
       <span class="hint">Add partners, kids and pets with names and birthdays from the Family section on their page.</span></label>
     <label class="field"><span>Interests</span><input type="text" name="interests" placeholder="Hiking, jazz, sourdough"><span class="hint">Separate with commas</span></label>
-    <label class="field"><span>Tags</span><input type="text" name="tags" placeholder="College, book club"><span class="hint">Separate with commas</span></label>
+    <label class="field"><span>Tags</span><input type="text" name="tags" placeholder="College, book club" autocomplete="off"><span class="hint">Separate with commas. Tags you've used before appear below as you type.</span></label>
+    <div class="tag-suggest" id="tagSuggest" hidden></div>
     <label class="field"><span>Notes</span><textarea name="notes" placeholder="Favorite foods, gift ideas, things to remember…"></textarea></label>
     <div class="dlg-actions">
       <button type="button" class="btn" data-close>Cancel</button>
@@ -1294,7 +1305,7 @@ function hardNow(p) {
 
 
 // ---------- UI state ----------
-const ui = { selected: null, search: '', rel: '', sort: 'first', tl: 'all', tab: 'home' };
+const ui = { selected: null, search: '', rel: '', sort: 'first', tl: 'all', tab: 'home', tags: [] }; // tags: active tag filters, lower case
 try { const s = localStorage.getItem('circle-sort'); if (s && $(`#sortBy option[value="${s}"]`)) ui.sort = s; } catch (e) {}
 $('#sortBy').value = ui.sort;
 
@@ -1319,7 +1330,8 @@ function matches(p, q) {
 }
 
 function renderList() {
-  let list = data.people.filter(p => (!ui.rel || p.relationship === ui.rel) && matches(p, ui.search));
+  renderTagStrip();
+  let list = data.people.filter(p => (!ui.rel || p.relationship === ui.rel) && ui.tags.every(k => hasTag(p, k)) && matches(p, ui.search));
   const byFirst = (a, b) => sortName(a, b, 'firstName') || sortName(a, b, 'lastName');
   const byLast = (a, b) => sortName(a, b, 'lastName') || sortName(a, b, 'firstName');
   const byName = ui.sort === 'last' ? byLast : byFirst;
@@ -1503,7 +1515,8 @@ function renderHome() {
 
 function renderPerson(p) {
   const last = lastContact(p);
-  const chips = [`<span class="pill accent">${esc(p.relationship || 'Other')}</span>`, ...p.tags.map(t => `<span class="pill">${esc(t)}</span>`)];
+  const chips = [`<span class="pill accent">${esc(p.relationship || 'Other')}</span>`,
+    ...p.tags.map(t => `<button type="button" class="pill" data-tag-filter="${esc(t.toLowerCase())}" title="Show everyone tagged ${esc(t)}">#${esc(t)}</button>`)];
   const over = overdueBy(p);
   const statBits = [last ? `Last talked ${ago(daysSince(last))}` : 'No conversations yet'];
   const b = bday(p);
@@ -1787,7 +1800,7 @@ $('#personForm').addEventListener('submit', async e => {
   Object.keys(MULTI).forEach(k => vals[k] = readRows(k));
   vals.contactEvery = Number(f.contactEvery.value);
   vals.interests = splitList(f.interests.value);
-  vals.tags = splitList(f.tags.value);
+  vals.tags = standardTags(splitList(f.tags.value));
   let p = f.dataset.id && getPerson(f.dataset.id);
   if (p) Object.assign(p, vals);
   else { p = { id: uid(), events: [], createdAt: todayStr(), ...vals }; data.people.push(p); }
@@ -3180,6 +3193,7 @@ function select(id) { ui.selected = id; ui.tl = 'all'; render(); $('#main').scro
 $('#brand').addEventListener('click', () => {
   ui.tab = 'home';
   ui.search = ''; $('#search').value = '';
+  ui.tags = [];
   select(null);
   renderList();
   syncNow();
@@ -3195,6 +3209,83 @@ document.querySelector('.tabbar').addEventListener('click', e => {
 });
 $('#addPersonBtn').addEventListener('click', () => openPersonDlg());
 $('#search').addEventListener('input', e => { ui.search = e.target.value.trim(); renderList(); });
+
+// ---------- Tags ----------
+// Every tag in use, case-insensitively: lower-case key → { name (its most common spelling), count }.
+function tagIndex() {
+  const spellings = new Map();
+  for (const p of data.people) for (const t of new Set(p.tags)) {
+    const k = t.toLowerCase();
+    if (!spellings.has(k)) spellings.set(k, new Map());
+    spellings.get(k).set(t, (spellings.get(k).get(t) || 0) + 1);
+  }
+  return new Map([...spellings].map(([k, m]) => {
+    const [name] = [...m].sort((a, b) => b[1] - a[1])[0];
+    return [k, { name, count: [...m.values()].reduce((a, b) => a + b, 0) }];
+  }));
+}
+const hasTag = (p, k) => p.tags.some(t => t.toLowerCase() === k);
+// The chip strip under the search box: tap a tag to show only people with it (several narrow
+// further). While searching, it shows just the tags that match what's typed.
+function renderTagStrip() {
+  const tags = tagIndex();
+  ui.tags = ui.tags.filter(k => tags.has(k));
+  const q = ui.search.toLowerCase();
+  const shown = [...tags].filter(([k]) => ui.tags.includes(k) || !q || k.includes(q))
+    .sort((a, b) => (ui.tags.includes(b[0]) - ui.tags.includes(a[0])) || b[1].count - a[1].count || a[1].name.localeCompare(b[1].name));
+  const strip = $('#tagStrip');
+  strip.hidden = !shown.length;
+  strip.innerHTML = shown.map(([k, t]) => `<button type="button" class="tag-chip ${ui.tags.includes(k) ? 'on' : ''}" data-tag="${esc(k)}" aria-pressed="${ui.tags.includes(k)}">#${esc(t.name)}<span class="n">${t.count}</span></button>`).join('');
+}
+$('#tagStrip').addEventListener('click', e => {
+  const b = e.target.closest('[data-tag]');
+  if (!b) return;
+  const k = b.dataset.tag;
+  if (ui.tags.includes(k)) ui.tags = ui.tags.filter(x => x !== k);
+  else {
+    ui.tags.push(k);
+    // Picked from search suggestions: the tag replaces the typed words.
+    if (ui.search) { ui.search = ''; $('#search').value = ''; }
+  }
+  renderList();
+  $('#people').scrollTop = 0;
+});
+// A tag on someone's page filters the list by it (on a phone, it opens the People tab).
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-tag-filter]');
+  if (!b) return;
+  ui.tags = [b.dataset.tagFilter];
+  ui.search = ''; $('#search').value = '';
+  if (getComputedStyle(document.querySelector('.tabbar')).display !== 'none') { ui.tab = 'people'; select(null); }
+  else renderList();
+});
+
+// Suggestions under a contact's Tags box: tags already in use that match what's being typed.
+function suggestTags() {
+  const input = $('#personForm').tags, box = $('#tagSuggest');
+  const parts = input.value.split(',');
+  const typing = parts.at(-1).trim().toLowerCase();
+  const have = new Set(parts.slice(0, -1).map(t => t.trim().toLowerCase()).filter(Boolean));
+  const found = [...tagIndex()].filter(([k]) => !have.has(k) && k !== typing && (!typing || k.includes(typing)))
+    .sort((a, b) => (b[0].startsWith(typing) - a[0].startsWith(typing)) || b[1].count - a[1].count).slice(0, 8);
+  box.hidden = !found.length || document.activeElement !== input;
+  box.innerHTML = found.map(([k, t]) => `<button type="button" class="tag-chip" data-pick-tag="${esc(t.name)}">#${esc(t.name)}<span class="n">${t.count}</span></button>`).join('');
+}
+$('#personForm').tags.addEventListener('input', suggestTags);
+$('#personForm').tags.addEventListener('focus', suggestTags);
+$('#personForm').tags.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== $('#personForm').tags) $('#tagSuggest').hidden = true; }, 150));
+// pointerdown keeps the focus in the Tags box, so the list stays open for picking several.
+$('#tagSuggest').addEventListener('pointerdown', e => {
+  const b = e.target.closest('[data-pick-tag]');
+  if (!b) return;
+  e.preventDefault();
+  const input = $('#personForm').tags;
+  const parts = input.value.split(',').slice(0, -1).map(t => t.trim()).filter(Boolean);
+  input.value = [...parts, b.dataset.pickTag].join(', ') + ', ';
+  suggestTags();
+});
+// Saving: a tag typed with different capitals takes the spelling already in use.
+const standardTags = tags => { const idx = tagIndex(); return [...new Map(tags.map(t => [t.toLowerCase(), idx.get(t.toLowerCase())?.name || t])).values()]; };
 $('#relFilter').addEventListener('change', e => { ui.rel = e.target.value; renderList(); });
 $('#sortBy').addEventListener('change', e => {
   ui.sort = e.target.value;
