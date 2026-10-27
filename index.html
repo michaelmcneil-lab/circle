@@ -3051,7 +3051,13 @@ function toggleTheme() {
 
 // ---------- Event wiring ----------
 function select(id) { ui.selected = id; ui.tl = 'all'; render(); $('#main').scrollTop = 0; }
-$('#brand').addEventListener('click', () => { ui.tab = 'home'; select(null); });
+// The Circle logo is "start over": Home, with the search cleared so the full list is back.
+$('#brand').addEventListener('click', () => {
+  ui.tab = 'home';
+  ui.search = ''; $('#search').value = '';
+  select(null);
+  renderList();
+});
 // Phone tab bar: Home or People. Tapping a tab also closes any open person.
 document.querySelector('.tabbar').addEventListener('click', e => {
   const b = e.target.closest('[data-tab]');
