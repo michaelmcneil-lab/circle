@@ -122,6 +122,21 @@ aside.side { border-right: 1px solid var(--line); background: var(--panel); disp
 .tag-chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 .tag-suggest { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 button.pill { font: inherit; font-size: 12px; cursor: pointer; }
+/* The relationship label on a person's page: looks like its pill, opens as a drop-down. */
+.pill-select { appearance: none; -webkit-appearance: none; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+  padding: 1px 22px 1px 9px; border-radius: 999px; border: 1px solid transparent; background-color: var(--accent-soft); color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238f897e' stroke-width='1.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 8px center; background-size: 9px 6px; }
+.pill-select:hover, .pill-select:focus-visible { border-color: var(--accent); outline: none; }
+/* Type-to-find person picker: a search box over the original drop-down, which stays (hidden)
+   as the value every form already reads. */
+.pick { position: relative; }
+.pick-hidden { position: absolute !important; opacity: 0; pointer-events: none; width: 1px !important; height: 1px !important; min-width: 0 !important; padding: 0 !important; border: 0 !important; }
+.pick-list { position: absolute; z-index: 40; left: 0; right: 0; top: calc(100% + 4px); max-height: 260px; overflow-y: auto; margin: 0; padding: 4px;
+  list-style: none; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); }
+.pick-list li { padding: 8px 10px; border-radius: 6px; cursor: pointer; }
+.pick-list li.on, .pick-list li:hover { background: var(--accent-soft); color: var(--accent); }
+.pick-list .muted { cursor: default; background: none !important; }
 input[type=search], input[type=text], input[type=date], input[type=email], input[type=tel], input[type=number], input[type=password], select, textarea {
   width: 100%; border: 1px solid var(--line); background: var(--panel-2); border-radius: 8px; padding: 7px 10px;
 }
@@ -533,7 +548,7 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
     <h3 id="ixDlgTitle">Log a conversation</h3>
     <div class="field"><span>Who was there</span>
       <div class="chipset" id="ixPeople"></div>
-      <select id="ixAddPerson" aria-label="Add a person to this conversation"></select>
+      <select id="ixAddPerson" class="people-pick" aria-label="Add a person to this conversation"></select>
     </div>
     <div class="field-row">
       <label class="field"><span>Date</span><input type="date" name="date" required></label>
@@ -556,7 +571,7 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
 <dialog id="evDlg">
   <form id="evForm">
     <h3 id="evDlgTitle">Add life event</h3>
-    <label class="field" id="evPersonField"><span>Who</span><select name="personId"></select></label>
+    <label class="field" id="evPersonField"><span>Who</span><select name="personId" class="people-pick" aria-label="Who"></select></label>
     <div class="field-row">
       <label class="field"><span>Type</span><select name="type"></select></label>
       <label class="field"><span>Date</span><input type="date" name="date" required></label>
@@ -587,7 +602,7 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
 <dialog id="fuDlg">
   <form id="fuForm">
     <h3 id="fuDlgTitle">Add follow-up</h3>
-    <label class="field" id="fuPersonField"><span>Who</span><select name="personId"></select></label>
+    <label class="field" id="fuPersonField"><span>Who</span><select name="personId" class="people-pick" aria-label="Who"></select></label>
     <label class="field"><span>What to do or ask about</span><input type="text" name="text" required placeholder="e.g. Check in on how he's doing"></label>
     <label class="field"><span>By (optional)</span><input type="date" name="due"></label>
     <label class="check" id="fuDoneField"><input type="checkbox" name="done"> Done</label>
@@ -661,7 +676,7 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
     <h3 id="evWhoTitle">Who is this with?</h3>
     <p class="small muted" style="margin:0" id="evWhoWhen"></p>
     <ul class="list" id="evWhoList"></ul>
-    <label class="field"><span>Add someone</span><select id="evWhoAdd"></select></label>
+    <label class="field"><span>Add someone</span><select id="evWhoAdd" class="people-pick" aria-label="Add someone"></select></label>
     <div class="stack" style="gap:4px" id="evWhoScope">
       <label class="check"><input type="radio" name="evScope" value="series" checked> Every time this event repeats</label>
       <label class="check"><input type="radio" name="evScope" value="one"> Just this one</label>
@@ -706,7 +721,7 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
       </ol>
       <div class="p-actions"><button type="button" class="btn" id="gcPreview">Preview</button></div>
       <div class="field-row" style="align-items:end">
-        <label class="field"><span>Person to test with</span><select id="gcPerson"></select></label>
+        <label class="field"><span>Person to test with</span><select id="gcPerson" class="people-pick" aria-label="Person to test with"></select></label>
         <button type="button" class="btn" id="gcSyncOne">Sync this person</button>
       </div>
       <div class="p-actions"><button type="button" class="btn primary" id="gcTurnOn">Turn on for everyone</button></div>
@@ -790,7 +805,7 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
   <form id="famForm">
     <h3 id="famDlgTitle">Add family member</h3>
     <label class="field"><span>Who</span>
-      <select name="linkTo"></select>
+      <select name="linkTo" class="people-pick" aria-label="Someone in Circle"></select>
       <span class="hint">Linking someone already in Circle shows the relationship on both of their pages.</span>
     </label>
     <label class="field"><span id="famRelLabel">Relationship</span><select name="rel"></select></label>
@@ -1537,6 +1552,103 @@ function renderMap() {
   </div>`;
 }
 document.addEventListener('change', e => { if (e.target.id === 'mapFilter') { ui.mapFilter = e.target.value; render(); } });
+// Changing the relationship straight from the label on a person's page.
+document.addEventListener('change', e => {
+  const sel = e.target.closest('[data-rel-for]');
+  if (!sel) return;
+  const p = getPerson(sel.dataset.relFor);
+  if (!p || p.relationship === sel.value) return;
+  p.relationship = sel.value;
+  save(); render();
+  toast(`${p.name} is now ${sel.value}.`);
+});
+
+// ---------- Type-to-find person picker ----------
+// Any <select class="people-pick"> gets a search box: tap to see everyone, or type part of a
+// name to narrow the list. The select stays (hidden) and holds the value, so the forms that
+// read it, and the code that fills it, work unchanged. Pickers appear wherever such a select
+// is added to the page, including ones drawn later.
+function upgradePicker(sel) {
+  if (sel.dataset.picker) return;
+  sel.dataset.picker = '1';
+  const box = document.createElement('div');
+  box.className = 'pick';
+  const input = document.createElement('input');
+  input.type = 'search'; input.autocomplete = 'off'; input.spellcheck = false;
+  input.setAttribute('aria-label', sel.getAttribute('aria-label') || 'Person');
+  input.setAttribute('role', 'combobox'); input.setAttribute('aria-autocomplete', 'list');
+  const list = document.createElement('ul');
+  list.className = 'pick-list'; list.hidden = true; list.setAttribute('role', 'listbox');
+  sel.classList.add('pick-hidden');
+  sel.tabIndex = -1;
+  sel.after(box);
+  box.append(input, list);
+  let shown = [], active = 0;
+  const blank = () => [...sel.options].find(o => !o.value);
+  const showChosen = () => {
+    const o = sel.selectedOptions[0];
+    input.value = o && o.value ? o.text : '';
+    input.placeholder = blank()?.text || 'Type a name…';
+    input.disabled = sel.disabled;
+    box.hidden = sel.style.display === 'none'; // e.g. everyone is already picked
+  };
+  // Code that sets the value directly (opening a form for someone) updates the box too.
+  const proto = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+  Object.defineProperty(sel, 'value', { configurable: true, get() { return proto.get.call(this); }, set(v) { proto.set.call(this, v); showChosen(); } });
+  const draw = () => {
+    const q = input.value.trim().toLowerCase();
+    const chosen = sel.selectedOptions[0]?.text.toLowerCase();
+    const all = [...sel.options].filter(o => o.value);
+    // Typing matches anywhere in the name; names starting with it come first.
+    shown = !q || q === chosen ? all : all.filter(o => o.text.toLowerCase().includes(q))
+      .sort((a, b) => (b.text.toLowerCase().startsWith(q) - a.text.toLowerCase().startsWith(q)));
+    active = 0;
+    list.innerHTML = shown.slice(0, 60).map((o, i) => `<li role="option" data-i="${i}" class="${i === active ? 'on' : ''}">${esc(o.text)}</li>`).join('')
+      || '<li class="muted small">No one matches</li>';
+    list.hidden = false;
+  };
+  const choose = o => {
+    sel.value = o.value;
+    sel.setCustomValidity?.('');
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    list.hidden = true;
+    showChosen();
+    input.blur();
+  };
+  // The list opens on a tap or typing, not on focus alone: a dialog that puts the cursor here
+  // when it opens shouldn't cover itself with a list.
+  input.addEventListener('focus', () => input.select());
+  input.addEventListener('click', draw);
+  input.addEventListener('input', draw);
+  input.addEventListener('keydown', e => {
+    if (list.hidden) { if (e.key === 'ArrowDown') { e.preventDefault(); draw(); } return; }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      active = Math.max(0, Math.min(Math.min(shown.length, 60) - 1, active + (e.key === 'ArrowDown' ? 1 : -1)));
+      list.querySelectorAll('li').forEach((li, i) => li.classList.toggle('on', i === active));
+      list.children[active]?.scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (shown[active]) choose(shown[active]);
+    } else if (e.key === 'Escape') { list.hidden = true; showChosen(); }
+  });
+  // pointerdown, not click: it fires before the box loses focus and hides the list.
+  list.addEventListener('pointerdown', e => {
+    const li = e.target.closest('[data-i]');
+    if (!li) return;
+    e.preventDefault();
+    choose(shown[li.dataset.i]);
+  });
+  input.addEventListener('blur', () => setTimeout(() => { list.hidden = true; showChosen(); }, 120));
+  sel.addEventListener('change', showChosen);
+  // The code that fills the select (or picks a value) runs later: keep the box in step.
+  new MutationObserver(showChosen).observe(sel, { childList: true, subtree: true, attributes: true });
+  sel.addEventListener('invalid', () => { input.setCustomValidity(sel.validationMessage); input.reportValidity(); setTimeout(() => input.setCustomValidity(''), 2000); });
+  showChosen();
+}
+new MutationObserver(() => document.querySelectorAll('select.people-pick:not([data-picker])').forEach(upgradePicker))
+  .observe(document.body, { childList: true, subtree: true });
+document.querySelectorAll('select.people-pick').forEach(upgradePicker);
 document.addEventListener('input', e => {
   if (e.target.id !== 'mapSearch') return;
   ui.mapSearch = e.target.value;
@@ -1742,7 +1854,9 @@ function renderHome() {
 
 function renderPerson(p) {
   const last = lastContact(p);
-  const chips = [`<span class="pill accent">${esc(p.relationship || 'Other')}</span>`,
+  // The relationship is changed right here: the label is a drop-down that saves on choosing.
+  const rels = RELATIONSHIPS.includes(p.relationship) || !p.relationship ? RELATIONSHIPS : [...RELATIONSHIPS, p.relationship];
+  const chips = [`<select class="pill-select" data-rel-for="${p.id}" aria-label="Relationship" title="Change relationship">${rels.map(r => `<option ${r === (p.relationship || 'Other') ? 'selected' : ''}>${esc(r)}</option>`).join('')}</select>`,
     `<button type="button" class="pill" data-closeness="${p.id}" title="Where they are in your circle">◎ ${p.closeness ? `${RINGS[p.closeness]}${p.direction === 'closer' ? ' · ↑ closer' : p.direction === 'space' ? ' · ↓ space' : ''}` : 'Place in your circle'}</button>`,
     ...p.tags.map(t => `<button type="button" class="pill" data-tag-filter="${esc(t.toLowerCase())}" title="Show everyone tagged ${esc(t)}">#${esc(t)}</button>`)];
   const over = overdueBy(p);
@@ -2699,10 +2813,10 @@ function personSelect(ref) {
   const newOpt = ref.name && !known ? `<option value="new:${esc(ref.name)}" selected>➕ New person: ${esc(ref.name)}</option>` : '';
   // Nobody named in the note: start blank, with a box for someone who isn't in Circle yet.
   if (!known && !ref.name) {
-    return `<div class="rv-person stack" style="gap:6px"><select data-rv-person data-blank aria-label="Person"><option value="" selected>Choose a person…</option>${opts}</select>
+    return `<div class="rv-person stack" style="gap:6px"><select data-rv-person data-blank class="people-pick" aria-label="Person"><option value="" selected>Choose a person…</option>${opts}</select>
       <input type="text" data-rv-newname placeholder="…or type the name of someone new" aria-label="New person's name"></div>`;
   }
-  return `<div class="rv-person"><select data-rv-person aria-label="Person">${newOpt}${opts}</select></div>`;
+  return `<div class="rv-person"><select data-rv-person class="people-pick" aria-label="Person">${newOpt}${opts}</select></div>`;
 }
 function openReview(row) {
   reviewing = row;
