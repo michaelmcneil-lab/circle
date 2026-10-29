@@ -56,9 +56,9 @@ const TOOLS = [
 function personLine(c: Circle, p: { id: string; name: string; nickname?: string; relationship?: string; company?: string }) {
   const last = c.lastContact(p.id);
   const hard = (c.person(p.id).events || []).filter((e: { type: string }) => HARD.has(e.type) && c.eventState(e) === "prominent");
-  const q = p as { closeness?: string; direction?: string };
+  const q = p as { closeness?: string; direction?: string; inMemory?: boolean };
   const bits = [p.relationship, q.closeness ? `${RINGS[q.closeness] ?? q.closeness}${q.direction === "closer" ? " (drawing closer)" : q.direction === "space" ? " (giving space)" : ""}` : "",
-    p.company, last ? `last talked ${fmt(last)}` : "no conversations logged"];
+    q.inMemory ? "in memory (has passed away)" : "", p.company, last ? `last talked ${fmt(last)}` : "no conversations logged"];
   if (hard.length) bits.push(`going through: ${hard.map((e: { title: string }) => e.title).join("; ")}`);
   const due = c.openFollowUps(p.id).filter((f) => f.due && c.since(f.due) >= 0);
   if (due.length) bits.push(`${due.length} follow-up${due.length > 1 ? "s" : ""} due`);
@@ -70,6 +70,7 @@ function brief(c: Circle, p: any): string {
   const out: string[] = [];
   out.push(`# ${p.name}${p.pronouns ? ` (${p.pronouns})` : ""}`);
   out.push([p.relationship, [p.jobTitle, p.company].filter(Boolean).join(" at ")].filter(Boolean).join(" · "));
+  if (p.inMemory) out.push(`In memory: ${p.name} has passed away${p.passedOn ? ` (${p.passedOn.length === 10 ? fmt(p.passedOn) : `on ${c.next(p.passedOn).md}, year not recorded`})` : ""}. The user keeps them in their circle to remember them; be gentle, and help honour them and support their family.`);
   // Where they are in the user's circle and which way the user wants it to go: guidance for how to help.
   if (p.closeness) {
     out.push(`Closeness: ${RINGS[p.closeness] ?? p.closeness}${p.direction ? `; the user wants to ${p.direction === "closer" ? "draw closer (nurture this relationship)" : "give this relationship more space"}` : ""}`
@@ -139,7 +140,9 @@ function comingUp(c: Circle, days: number): string {
   if (undated.length) out.push(`\n${undated.length} more open follow-up${undated.length > 1 ? "s have" : " has"} no date.`);
   const dates: { days: number; line: string }[] = [];
   for (const p of c.doc.people) {
-    if (p.birthday) { const n = c.next(p.birthday); if (n.days <= days) dates.push({ days: n.days, line: `${p.name}'s birthday${n.years ? `, turning ${n.years}` : ""}` }); }
+    if (p.birthday && !p.inMemory) { const n = c.next(p.birthday); if (n.days <= days) dates.push({ days: n.days, line: `${p.name}'s birthday${n.years ? `, turning ${n.years}` : ""}` }); }
+    // People who have passed: the anniversary of their passing and their birthday, with family to reach out to.
+    for (const r of c.remembrance(p, days)) { const fam = c.family(p); dates.push({ days: r.days, line: `In memory: ${r.line}${fam.length ? ` (family: ${fam.join(", ")})` : ""}` }); }
     for (const m of p.familyMembers || []) if (m.birthday) { const n = c.next(m.birthday); if (n.days <= days) dates.push({ days: n.days, line: `${m.name}'s birthday (${p.name}'s ${REL_LABEL[m.rel] || m.rel})${n.years ? `, turning ${n.years}` : ""}` }); }
     for (const e of p.events || []) if (e.recurring || (e.type === "loss" && c.next(e.date).years === 1)) {
       const n = c.next(e.date);

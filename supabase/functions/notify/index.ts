@@ -139,7 +139,9 @@ function meetingsFrom(ics: string, doc: Doc, selfEmail: string, from: Date, to: 
   for (const e of events) if (!e.isRecurrenceException()) masters.set(e.uid, e);
   for (const e of events) if (e.isRecurrenceException()) masters.get(e.uid)?.relateException(e);
 
-  const people = doc.people ?? [];
+  // People who have passed aren't matched to events by name (no "How did it go?" about them);
+  // the user can still put them on an event with Who?.
+  const people = (doc.people ?? []).filter((p) => !p.inMemory);
   const byEmail = new Map<string, string>();
   for (const p of people) for (const em of p.emails ?? []) byEmail.set(String(em.value).toLowerCase(), p.id);
   const firstNames = new Map<string, number>();
@@ -159,7 +161,7 @@ function meetingsFrom(ics: string, doc: Doc, selfEmail: string, from: Date, to: 
   // Who an event is with, as the user corrected it in Circle: for one occurrence (keyed by
   // the meeting's key) or a whole repeating series (keyed by the event's UID). These win
   // over matching by name; an empty list means "nobody in Circle".
-  const known = new Set(people.map((p) => p.id));
+  const known = new Set((doc.people ?? []).map((p) => p.id));
   const chosen = new Map<string, string[]>((doc.eventLinks ?? []).map((l: { id: string; personIds: string[] }) =>
     [String(l.id), (l.personIds ?? []).filter((id) => known.has(id))]));
 
@@ -285,10 +287,19 @@ async function refreshAgenda(userId: string, doc: Doc) {
 }
 
 // ---------- The morning brief ----------
+// Tomorrow's days of remembrance for people who have passed (the anniversary of their passing,
+// their birthday), with family to reach out to. A day ahead, so there's time to honour them.
+function remembranceTomorrow(c: Circle): string[] {
+  return c.doc.people.flatMap((p) => c.remembrance(p, 1).filter((r) => r.days === 1).map((r) => {
+    const fam = c.family(p);
+    return `🕊️ Tomorrow: ${r.line}${fam.length ? `. Reach out to ${fam.slice(0, 3).join(", ")}` : ""}`;
+  }));
+}
 function brief(c: Circle, tz: string, meetings: { start_at: string; person_ids: string[] }[]): Payload | null {
   const name = (id: string) => c.person(id)?.firstName || c.person(id)?.name || "someone";
   const hardFor = (id: string) => (c.person(id)?.events ?? []).filter((e: { type: string }) => HARD.has(e.type) && c.eventState(e) === "prominent")[0];
-  const parts: string[] = [];
+  const remember = remembranceTomorrow(c);
+  const parts: string[] = [...remember];
   const seen = new Set<string>();
   for (const m of meetings.slice(0, 3)) {
     const who = m.person_ids.map((id: string) => { seen.add(id); const h = hardFor(id); return h ? `${name(id)} (${h.title.toLowerCase()})` : name(id); });
@@ -302,7 +313,8 @@ function brief(c: Circle, tz: string, meetings: { start_at: string; person_ids: 
   if (hard.length) parts.push(`Thinking of ${hard.slice(0, 3).join(", ")}`);
   const dates: string[] = [];
   for (const p of c.doc.people) {
-    if (p.birthday) { const n = c.next(p.birthday); if (n.days <= 1) dates.push(`${name(p.id)}'s birthday ${n.days ? "tomorrow" : "today"}`); }
+    // Birthdays of people who have passed are among the remembrances above.
+    if (p.birthday && !p.inMemory) { const n = c.next(p.birthday); if (n.days <= 1) dates.push(`${name(p.id)}'s birthday ${n.days ? "tomorrow" : "today"}`); }
     for (const m of p.familyMembers ?? []) if (m.birthday) {
       const n = c.next(m.birthday);
       if (n.days <= 1) dates.push(`${m.name}'s birthday ${n.days ? "tomorrow" : "today"} (${name(p.id)}'s ${REL_LABEL[m.rel] || m.rel})`);
@@ -314,7 +326,7 @@ function brief(c: Circle, tz: string, meetings: { start_at: string; person_ids: 
   }
   parts.push(...dates.slice(0, 2));
   if (!parts.length) return null;
-  return { title: meetings.length ? `Today: ${meetings.length} meeting${meetings.length > 1 ? "s" : ""} with your people` : "Today in Circle",
+  return { title: meetings.length ? `Today: ${meetings.length} meeting${meetings.length > 1 ? "s" : ""} with your people` : remember.length ? "Remembering tomorrow" : "Today in Circle",
     body: parts.join(" · ").slice(0, 240), url: `${APP_URL}?view=today`, tag: `brief-${c.today}` };
 }
 
@@ -332,7 +344,9 @@ async function runUser(s: Settings, force = false) {
   }
 
   const weekday = !["Sat", "Sun"].includes(now.weekday);
-  if (s.last_brief_date !== now.date && now.hm >= s.brief_time && now.hm < BRIEF_LATEST && (weekday || s.brief_weekends)) {
+  // A remembrance tomorrow brings the brief on any day, weekends included.
+  const remembering = remembranceTomorrow(new Circle(doc, tz)).length > 0;
+  if (s.last_brief_date !== now.date && now.hm >= s.brief_time && now.hm < BRIEF_LATEST && (weekday || s.brief_weekends || remembering)) {
     const c = new Circle(doc, tz);
     const dayStart = new Date(Date.now() - 864e5).toISOString(), dayEnd = new Date(Date.now() + 864e5).toISOString();
     const { data: rows } = await admin.from("circle_agenda").select("start_at, person_ids, all_day").eq("user_id", s.user_id)

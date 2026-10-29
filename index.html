@@ -326,6 +326,7 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
 .map-dot .avatar { width: 100%; height: 100%; font-size: 10px; box-shadow: 0 0 0 2px var(--panel); }
 .map-dot.closer .avatar { box-shadow: 0 0 0 2px var(--accent); }
 .map-dot.space { opacity: .55; }
+.map-dot.memory::after { content: '🕊️'; position: absolute; right: -18%; top: -22%; font-size: 70%; line-height: 1; pointer-events: none; }
 .map-dot:hover, .map-dot:focus-visible { z-index: 2; }
 .map-dot:hover .avatar, .map-dot:focus-visible .avatar { box-shadow: 0 0 0 3px var(--accent); }
 .map-key { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-top: 10px; font-size: 12px; color: var(--ink-3); }
@@ -520,6 +521,18 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
         <span class="hint">Year is optional</span>
       </div>
       <label class="field"><span>How we met</span><input type="text" name="howMet"></label>
+    </div>
+    <div class="field">
+      <label class="check"><input type="checkbox" name="inMemory"> 🕊️ In memory (they have passed away)</label>
+      <div id="memoryDate" class="stack" style="gap:4px;margin-top:6px" hidden>
+        <span class="small muted">The day they passed</span>
+        <div class="bday-row">
+          <select name="dMonth" aria-label="Month they passed"></select>
+          <select name="dDay" aria-label="Day they passed"></select>
+          <input type="number" name="dYear" min="1900" max="2100" placeholder="Year" aria-label="Year they passed (optional)">
+        </div>
+        <span class="hint">They stay in your circles. Circle stops check-in reminders and reminds you the day before the anniversary of their passing and their birthday.</span>
+      </div>
     </div>
     <div class="field"><span>Phone</span><div class="multi" data-multi="phones"></div>
       <button type="button" class="btn ghost small add-row" data-add="phones">+ Add phone</button></div>
@@ -948,10 +961,14 @@ function nextOccurrence(m, d, y) {
 }
 function nextAnniversary(s) { const { y, m, d } = parseDate(s); return nextOccurrence(m, d, y); }
 // Birthdays are stored as "YYYY-MM-DD", or "MM-DD" when the year isn't known.
-function bday(p) {
-  if (!p.birthday) return null;
-  const n = p.birthday.split('-').map(Number);
-  return n.length === 3 ? { y: n[0], m: n[1], d: n[2] } : { y: null, m: n[0], d: n[1] };
+const yearlyDate = s => { const n = s.split('-').map(Number); return n.length === 3 ? { y: n[0], m: n[1], d: n[2] } : { y: null, m: n[0], d: n[1] }; };
+function bday(p) { return p.birthday ? yearlyDate(p.birthday) : null; }
+// The day someone passed, the same way (only for people marked In memory).
+function passedDate(p) { return p.inMemory && p.passedOn ? yearlyDate(p.passedOn) : null; }
+// "1948 – 2026" when both years are known, else whichever is.
+function lifeYears(p) {
+  const b = bday(p)?.y, d = passedDate(p)?.y;
+  return b && d ? `${b} – ${d}` : d ? `died ${d}` : b ? `born ${b}` : '';
 }
 function ageOf(b) {
   if (!b?.y) return null;
@@ -1023,6 +1040,9 @@ function normalize(d) {
     // import, before sources were recorded, came from that import.
     if (!p.source && p.createdAt === GMAIL_IMPORT_DAY) p.source = 'gmail-import';
     if (!SOURCE_TEXT[p.source]) p.source = '';
+    // In memory: they have passed away; passedOn is the day ("YYYY-MM-DD" or "MM-DD"), if known.
+    p.inMemory = !!p.inMemory;
+    p.passedOn = p.inMemory && /^(\d{4}-)?\d{2}-\d{2}$/.test(p.passedOn || '') ? p.passedOn : '';
     p.events.forEach(e => { e.id ||= uid(); e.visibility ||= 'auto'; });
   });
   const ids = new Set(d.people.map(p => p.id));
@@ -1277,6 +1297,14 @@ const relativesOf = p => data.relations.flatMap(r =>
   r.from === p.id ? [{ r, other: getPerson(r.to), type: r.type }]
   : r.to === p.id ? [{ r, other: getPerson(r.from), type: FAMILY_REL[r.type].rev }] : []).filter(x => x.other);
 const relLabel = type => FAMILY_REL[type]?.label || 'Family';
+// Someone's family to reach out to (for people who have passed): linked people in Circle as
+// links, family members kept on their page by name; pets and others who've passed are left out.
+function familyToReach(p) {
+  const linked = relativesOf(p).filter(x => !x.other.inMemory)
+    .map(x => `${personLink(x.other)} <span class="muted">(${esc(relLabel(x.type).toLowerCase())})</span>`);
+  const kept = p.familyMembers.filter(m => m.rel !== 'pet').map(m => `${esc(m.name)} <span class="muted">(${esc(relLabel(m.rel).toLowerCase())})</span>`);
+  return [...linked, ...kept];
+}
 const memberAvatar = m => {
   if (m.rel === 'pet') return `<div class="avatar" style="--h:30" aria-hidden="true">🐾</div>`;
   const [first = '', ...rest] = m.name.split(/\s+/);
@@ -1285,7 +1313,7 @@ const memberAvatar = m => {
 const sortedPeople = () => [...data.people].sort((a, b) => a.name.localeCompare(b.name));
 function lastContact(p) { return ixFor(p).reduce((m, i) => (!m || i.date > m ? i.date : m), null); }
 function overdueBy(p) {
-  if (!p.contactEvery) return null;
+  if (!p.contactEvery || p.inMemory) return null; // never "time to check in" with someone who has passed
   const last = lastContact(p);
   if (!last) return Infinity;
   const over = daysSince(last) - p.contactEvery;
@@ -1404,8 +1432,8 @@ try { const s = localStorage.getItem('circle-sort'); if (s && $(`#sortBy option[
 $('#sortBy').value = ui.sort;
 
 const MONTHS = Array.from({ length: 12 }, (_, i) => new Date(2000, i, 1).toLocaleDateString(undefined, { month: 'long' }));
-document.querySelectorAll('[name=bMonth]').forEach(s => s.innerHTML = '<option value="">Month</option>' + MONTHS.map((m, i) => `<option value="${i + 1}">${m}</option>`).join(''));
-document.querySelectorAll('[name=bDay]').forEach(s => s.innerHTML = '<option value="">Day</option>' + Array.from({ length: 31 }, (_, i) => `<option>${i + 1}</option>`).join(''));
+document.querySelectorAll('[name=bMonth], [name=dMonth]').forEach(s => s.innerHTML = '<option value="">Month</option>' + MONTHS.map((m, i) => `<option value="${i + 1}">${m}</option>`).join(''));
+document.querySelectorAll('[name=bDay], [name=dDay]').forEach(s => s.innerHTML = '<option value="">Day</option>' + Array.from({ length: 31 }, (_, i) => `<option>${i + 1}</option>`).join(''));
 $('#famForm [name=rel]').innerHTML = Object.entries(FAMILY_REL).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
 const CHECKIN_LABEL = Object.fromEntries([...$('#personForm [name=contactEvery]').options].map(o => [o.value, o.text]));
 
@@ -1438,7 +1466,7 @@ function renderList() {
   if (!list.length) { el.innerHTML = `<div class="empty-list">No matches.</div>`; return; }
   el.innerHTML = list.map(p => {
     const last = lastContact(p);
-    const sub = last ? `Talked ${ago(daysSince(last))}` : 'No conversations yet';
+    const sub = p.inMemory ? `🕊️ In memory${lifeYears(p) ? ` · ${lifeYears(p)}` : ''}` : last ? `Talked ${ago(daysSince(last))}` : 'No conversations yet';
     const hard = hardNow(p)[0];
     return `<button class="person-row ${p.id === ui.selected ? 'active' : ''}" data-id="${p.id}">
       ${avatar(p)}
@@ -1497,7 +1525,7 @@ function renderMap() {
       inRow.forEach((p, j) => {
         const a = -Math.PI / 2 + GAP / 2 + (2 * Math.PI - GAP) * (j + 0.5 + (row % 2) * 0.5) / inRow.length;
         const x = 50 + r * 50 * Math.cos(a), y = 50 + r * 50 * Math.sin(a);
-        dots.push(`<button type="button" class="map-dot ${p.direction}" data-closeness="${p.id}" title="${esc(p.name)}${p.direction ? ` · ${DIRECTIONS[p.direction]}` : ''}"
+        dots.push(`<button type="button" class="map-dot ${p.direction}${p.inMemory ? ' memory' : ''}" data-closeness="${p.id}" title="${esc(p.name)}${p.inMemory ? ' · 🕊️ In memory' : ''}${p.direction ? ` · ${DIRECTIONS[p.direction]}` : ''}"
           style="left:${x.toFixed(2)}%;top:${y.toFixed(2)}%;width:${size.toFixed(2)}%;aspect-ratio:1" aria-label="${esc(p.name)}, ${RINGS[k]}${p.direction ? `, ${DIRECTIONS[p.direction]}` : ''}">${avatar(p)}</button>`);
         if (p.direction) {
           // A short arrow just beside the dot: towards the middle to draw closer, outwards to give space.
@@ -1751,9 +1779,21 @@ function renderHome() {
   const upcoming = [];
   data.people.forEach(p => {
     const b = bday(p);
+    // For someone who has passed, their birthday and the anniversary of their passing name
+    // the family you might reach out to.
+    const fam = p.inMemory ? familyToReach(p) : [];
+    const reach = fam.length ? `<div class="small">Reach out to ${fam.join(', ')}</div>` : '';
     if (b) {
       const a = nextOccurrence(b.m, b.d, b.y);
-      if (a.days <= REMIND_DAYS) upcoming.push({ p, days: a.days, label: `🎂 Birthday${a.years > 0 && a.years < 130 ? ` — turns ${a.years}` : ''}` });
+      if (a.days <= REMIND_DAYS) upcoming.push({ p, days: a.days, label: p.inMemory
+        ? `🎂 🕊️ Birthday${a.years > 0 && a.years < 130 ? ` · would have been ${a.years}` : ''}${reach}`
+        : `🎂 Birthday${a.years > 0 && a.years < 130 ? ` — turns ${a.years}` : ''}` });
+    }
+    const pd = passedDate(p);
+    if (pd) {
+      const a = nextOccurrence(pd.m, pd.d, pd.y);
+      if (a.days <= REMIND_DAYS && a.years !== 0) upcoming.push({ p, days: a.days,
+        label: `🕊️ ${a.years ? `${a.years === 1 ? 'One year' : `${a.years} years`} since they passed` : 'Anniversary of their passing'}${reach}` });
     }
     p.events.filter(e => e.recurring || lossAnniversary(e)).forEach(e => {
       const a = nextAnniversary(e.date);
@@ -1860,9 +1900,13 @@ function renderPerson(p) {
     `<button type="button" class="pill" data-closeness="${p.id}" title="Where they are in your circle">◎ ${p.closeness ? `${RINGS[p.closeness]}${p.direction === 'closer' ? ' · ↑ closer' : p.direction === 'space' ? ' · ↓ space' : ''}` : 'Place in your circle'}</button>`,
     ...p.tags.map(t => `<button type="button" class="pill" data-tag-filter="${esc(t.toLowerCase())}" title="Show everyone tagged ${esc(t)}">#${esc(t)}</button>`)];
   const over = overdueBy(p);
-  const statBits = [last ? `Last talked ${ago(daysSince(last))}` : 'No conversations yet'];
+  const pd = passedDate(p);
+  const statBits = p.inMemory
+    ? [`🕊️ In memory${pd ? ` · passed ${pd.y ? fmtDate(p.passedOn) : fmtBirthday(pd)}` : ''}${lifeYears(p).includes('–') ? ` · ${lifeYears(p)}` : ''}`]
+    : [last ? `Last talked ${ago(daysSince(last))}` : 'No conversations yet'];
   const b = bday(p);
-  if (b) { const a = nextOccurrence(b.m, b.d, b.y); statBits.push(`Birthday ${a.days === 0 ? 'today 🎉' : 'in ' + a.days + ' days'}`); }
+  if (b) { const a = nextOccurrence(b.m, b.d, b.y); statBits.push(p.inMemory ? `Birthday ${a.days === 0 ? 'today' : 'in ' + a.days + ' days'}${a.years ? ` · would have been ${a.years}` : ''}`
+    : `Birthday ${a.days === 0 ? 'today 🎉' : 'in ' + a.days + ' days'}`); }
   // Family birthdays coming up soon are worth asking about.
   const famSoon = [
     ...p.familyMembers.map(m => ({ name: m.name.split(/\s+/)[0], b: bday(m) })),
@@ -2106,25 +2150,42 @@ function openPersonDlg(p) {
     TEXT_FIELDS.forEach(k => f[k].value = p[k] || '');
     const b = bday(p);
     if (b) { f.bMonth.value = String(b.m); f.bDay.value = String(b.d); f.bYear.value = b.y || ''; }
+    f.inMemory.checked = !!p.inMemory;
+    $('#memoryDate').hidden = !p.inMemory;
+    const pd = passedDate(p);
+    if (pd) { f.dMonth.value = String(pd.m); f.dDay.value = String(pd.d); f.dYear.value = pd.y || ''; }
     f.contactEvery.value = String(p.contactEvery || 0);
     f.interests.value = p.interests.join(', ');
     f.tags.value = p.tags.join(', ');
   } else f.relationship.value = 'Friend';
+  if (!p) $('#memoryDate').hidden = true;
   showPhotoPreview();
   $('#personDlg').showModal();
 }
-// Returns the stored birthday string, or throws a message for the user.
-function readBirthday(f) {
-  const m = Number(f.bMonth.value), d = Number(f.bDay.value), y = f.bYear.value.trim();
+// Returns a yearly date as stored ("YYYY-MM-DD", or "MM-DD" without the year) from month, day
+// and year fields, or throws a message for the user. `what` names it in those messages.
+function readDayFields(mv, dv, yv, what) {
+  const m = Number(mv), d = Number(dv), y = String(yv).trim();
   if (!m && !d && !y) return '';
-  if (!m || !d) throw 'Pick both a month and a day for the birthday.';
-  if (y && !/^\d{4}$/.test(y)) throw 'Birthday year should be four digits, or left blank.';
+  const What = what[0].toUpperCase() + what.slice(1);
+  if (!m || !d) throw `Pick both a month and a day for the ${what}.`;
+  if (y && !/^\d{4}$/.test(y)) throw `${What} year should be four digits, or left blank.`;
   const check = new Date(y ? Number(y) : 2000, m - 1, d); // 2000 is a leap year, so Feb 29 is allowed without a year
   if (check.getDate() !== d) throw `${MONTHS[m - 1]} doesn't have ${d} days${y ? ` in ${y}` : ''}.`;
-  if (y && check > new Date()) throw 'Birthday is in the future.';
+  if (y && check > new Date()) throw `${What} is in the future.`;
   const mmdd = `${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
   return y ? `${y}-${mmdd}` : mmdd;
 }
+const readBirthday = f => readDayFields(f.bMonth.value, f.bDay.value, f.bYear.value, 'birthday');
+// The day someone passed, if they're marked In memory ("" when no date is given).
+function checkedPassedOn(f) {
+  if (!f.inMemory.checked) return '';
+  try { return readDayFields(f.dMonth.value, f.dDay.value, f.dYear.value, 'date they passed'); }
+  catch (msg) { f.dMonth.setCustomValidity(msg); f.dMonth.reportValidity(); return null; }
+}
+$('#personForm').inMemory.addEventListener('change', e => { $('#memoryDate').hidden = !e.target.checked; });
+document.querySelectorAll('[name=dMonth], [name=dDay], [name=dYear]').forEach(el =>
+  el.addEventListener('input', () => el.form.dMonth.setCustomValidity('')));
 // Reads the birthday fields of a form, or shows the problem and returns null.
 function checkedBirthday(f) {
   try { return readBirthday(f); } catch (msg) { f.bMonth.setCustomValidity(msg); f.bMonth.reportValidity(); return null; }
@@ -2138,6 +2199,9 @@ $('#personForm').addEventListener('submit', async e => {
   TEXT_FIELDS.forEach(k => vals[k] = f[k].value.trim());
   vals.birthday = checkedBirthday(f);
   if (vals.birthday === null) return;
+  vals.inMemory = f.inMemory.checked;
+  vals.passedOn = checkedPassedOn(f);
+  if (vals.passedOn === null) return;
   const badLink = readRows('links').find(l => !safeUrl(l.value));
   if (badLink) { alert(`"${badLink.value}" doesn't look like a web link.`); return; }
   Object.keys(MULTI).forEach(k => vals[k] = readRows(k));

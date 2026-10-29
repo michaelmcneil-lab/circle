@@ -50,9 +50,42 @@ export class Circle {
     if (target < dayNum(this.today)) { year++; target = Date.UTC(year, m - 1, d) / 86400000; }
     return { days: target - dayNum(this.today), years: y ? year - y : null, md: `${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}` };
   }
+  // A person's family, as "Linda (spouse)": linked people in Circle (other than those who've
+  // also passed) and family members kept on their page (not pets). For reaching out on the
+  // days that matter after someone has passed.
+  // deno-lint-ignore no-explicit-any
+  family(p: any): string[] {
+    const out: string[] = [];
+    const who = (o: { firstName?: string; name: string }) => o.firstName || o.name;
+    for (const r of this.doc.relations ?? []) {
+      // A relation { from, to, type } means "to is from's <type>".
+      const other = r.from === p.id ? this.person(r.to) : r.to === p.id ? this.person(r.from) : null;
+      const type = r.from === p.id ? r.type : REL_REV[r.type];
+      if (other && !other.inMemory) out.push(`${who(other)} (${REL_LABEL[type] || "family"})`);
+    }
+    for (const m of p.familyMembers ?? []) if (m.rel !== "pet") out.push(`${m.name} (${REL_LABEL[m.rel] || "family"})`);
+    return out;
+  }
+  // The days to remember someone who has passed, within `days`: the anniversary of their
+  // passing and their birthday.
+  // deno-lint-ignore no-explicit-any
+  remembrance(p: any, days: number): { days: number; line: string }[] {
+    if (!p.inMemory) return [];
+    const out: { days: number; line: string }[] = [];
+    if (p.passedOn) {
+      const n = this.next(p.passedOn);
+      if (n.days <= days) out.push({ days: n.days, line: n.years ? `${n.years === 1 ? "one year" : `${n.years} years`} since ${p.name} passed` : `the anniversary of ${p.name}'s passing` });
+    }
+    if (p.birthday) {
+      const n = this.next(p.birthday);
+      if (n.days <= days) out.push({ days: n.days, line: `${p.name}'s birthday${n.years ? `; they would have been ${n.years}` : ""}` });
+    }
+    return out;
+  }
   names(ids: string[], except?: string) { return ids.filter((i) => i !== except).map((i) => this.person(i)?.name).filter(Boolean).join(" & "); }
-  overdue(p: { id: string; contactEvery?: number }) {
-    if (!p.contactEvery) return false;
+  // Someone who has passed is never "due a check-in".
+  overdue(p: { id: string; contactEvery?: number; inMemory?: boolean }) {
+    if (!p.contactEvery || p.inMemory) return false;
     const last = this.lastContact(p.id);
     return !last || this.since(last) > p.contactEvery;
   }
