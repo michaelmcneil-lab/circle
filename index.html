@@ -976,10 +976,20 @@ function ageOf(b) {
   const t = parseDate(todayStr());
   return t.y - b.y - (t.m < b.m || (t.m === b.m && t.d < b.d) ? 1 : 0);
 }
-function fmtBirthday(b) {
+// inMemory: for someone who has passed, the age reads "would have been".
+function fmtBirthday(b, inMemory = false) {
   const s = new Date(2000, b.m - 1, b.d).toLocaleDateString(undefined, b.y ? undefined : { month: 'long', day: 'numeric' });
   if (!b.y) return s;
-  return `${new Date(b.y, b.m - 1, b.d).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })} (age ${ageOf(b)})`;
+  return `${new Date(b.y, b.m - 1, b.d).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })} (${inMemory ? 'would have been' : 'age'} ${ageOf(b)})`;
+}
+// The day someone passed, with how old they were when both years are known.
+function fmtPassed(p) {
+  const pd = passedDate(p);
+  if (!pd) return p.inMemory ? 'Date not recorded' : '';
+  const day = new Date(pd.y || 2000, pd.m - 1, pd.d).toLocaleDateString(undefined, pd.y ? { month: 'long', day: 'numeric', year: 'numeric' } : { month: 'long', day: 'numeric' });
+  const b = bday(p);
+  const aged = b?.y && pd.y ? pd.y - b.y - (pd.m < b.m || (pd.m === b.m && pd.d < b.d) ? 1 : 0) : null;
+  return `${day}${aged != null && aged >= 0 ? ` (aged ${aged})` : ''}`;
 }
 // Only http(s) links are allowed; a bare "linkedin.com/in/x" gets https:// added.
 function safeUrl(v) {
@@ -1928,7 +1938,8 @@ function renderPerson(p) {
     ...p.phones.map(x => fact(`${esc(x.label)} phone`, `<a href="tel:${esc(x.value.replace(/[^\d+]/g, ''))}">${esc(x.value)}</a>`)),
     ...p.emails.map(x => fact(`${esc(x.label)} email`, `<a href="mailto:${esc(x.value)}">${esc(x.value)}</a>`)),
     fact('Online', links),
-    fact('Birthday', b ? fmtBirthday(b) : ''),
+    fact('Birthday', b ? fmtBirthday(b, p.inMemory) : ''),
+    p.inMemory ? fact('🕊️ Passed', esc(fmtPassed(p))) : '',
     ...p.addresses.map(x => fact(`${esc(x.label)} address`, esc(x.value))),
     fact('How we met', esc(p.howMet)),
     fact('Added', [p.createdAt ? fmtDate(p.createdAt) : '', SOURCE_TEXT[p.source] || ''].filter(Boolean).map(esc).join(' · ')),
