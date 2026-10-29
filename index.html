@@ -294,7 +294,7 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
 @media (max-width: 860px) {
   .grid2, .person-grid { grid-template-columns: minmax(0, 1fr); }
 }
-/* Circle map: you in the middle, rings drawn as nested circles, people placed by percentage
+/* Circle of Connection (the map): you in the middle, rings drawn as nested circles, people placed by percentage
    so the whole map scales with its square. */
 .map-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; align-items: start; }
 @media (max-width: 980px) { .map-layout { grid-template-columns: minmax(0, 1fr); } }
@@ -424,11 +424,22 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
   </button>
 </nav>
 
+<!-- How to decide which ring someone belongs in -->
+<dialog id="ringHelpDlg">
+  <form method="dialog">
+    <h3>Where does someone belong?</h3>
+    <p class="small" style="margin:0">Most of us keep people in widening layers: about 5 at the centre, then roughly 15, 50, 150 and 500, as Robin Dunbar's research suggests. The numbers are a guide, not a limit. Ask yourself:</p>
+    <div class="stack" style="gap:12px" id="ringHelpBody"></div>
+    <div class="dlg-actions"><button class="btn primary">Close</button></div>
+  </form>
+</dialog>
+
 <!-- Where someone is in your circle, and which way you want it to go -->
 <dialog id="closeDlg">
   <form id="closeForm">
     <div style="display:flex;gap:12px;align-items:center"><div id="closeAvatar"></div><h3 id="closeTitle" style="margin:0">Closeness</h3></div>
-    <div class="stack" style="gap:6px"><strong class="small">Where they are in your circle now</strong>
+    <div class="stack" style="gap:6px"><div style="display:flex;justify-content:space-between;gap:8px"><strong class="small">Where they are in your circle now</strong>
+      <button type="button" class="linkish small" data-ring-help>How do I decide?</button></div>
       <div class="choice-row" id="closeRings"></div></div>
     <div class="stack" style="gap:6px"><strong class="small">Where you want it to go</strong>
       <div class="choice-row">
@@ -863,7 +874,8 @@ const EV_TYPES = {
 const REMIND_DAYS = 30;
 // The rings of your circle, from the centre out (key → label), and which way you want a
 // relationship to go. Keep in step with RINGS / DIRECTIONS in supabase/functions/_shared/circle.ts.
-const RINGS = { inner: 'Inner circle', close: 'Close', connected: 'Connected', wider: 'Wider circle', acquaint: 'Acquaintances' };
+// The keys are fixed (people are saved with them); only the names shown change.
+const RINGS = { inner: 'Deepest', close: 'Trusted', connected: 'Kindred', wider: 'Community', acquaint: 'Familiar' };
 const DIRECTIONS = { closer: 'Draw closer', space: 'Give space' };
 // How a person first arrived in Circle, shown on their page beside the date they were added.
 const SOURCE_TEXT = { circle: 'added in Circle', google: 'from Google Contacts', import: 'imported from a contacts file',
@@ -1435,7 +1447,7 @@ function render() {
   hydratePhotos($('#main'));
 }
 
-// ---------- Circle map ----------
+// ---------- Circle of Connection (the map) ----------
 // You in the middle; each ring a band of the circle, people spread evenly around it (in more
 // rows when it's crowded), leaving a gap at the top for the ring's name. Positions are
 // percentages of the square, so the map scales from a phone to a wide screen.
@@ -1494,8 +1506,8 @@ function renderMap() {
   const allUnplaced = data.people.filter(p => !p.closeness).length;
   main.innerHTML = `<div class="wrap">
     <div class="home-head">
-      <div><h1>Your circle</h1><div class="muted">${placed.length} placed${closer ? ` · ${closer} drawing closer` : ''}${space ? ` · ${space} giving space` : ''}</div></div>
-      <div class="p-actions"><select id="mapFilter" aria-label="Show on the map">${filterOpts}</select></div>
+      <div><h1>Circle of Connection</h1><div class="muted">${placed.length} placed${closer ? ` · ${closer} drawing closer` : ''}${space ? ` · ${space} giving space` : ''}</div></div>
+      <div class="p-actions"><button type="button" class="btn ghost" data-ring-help>How do I decide?</button><select id="mapFilter" aria-label="Show on the map">${filterOpts}</select></div>
     </div>
     <div class="map-layout">
       <div>
@@ -1532,6 +1544,25 @@ document.addEventListener('input', e => {
   render();
   const s = $('#mapSearch'); s.focus(); s.setSelectionRange(pos, pos);
 });
+
+// The questions to ask yourself for each ring, with its rough size (Dunbar's layers).
+const RING_HELP = {
+  inner: { about: 5, ask: ['Would I be devastated if they were gone?', 'Do I let them see me at my worst?', 'Would I let them show up for me when things are bad?', 'Do I talk with them most weeks?'] },
+  close: { about: 15, ask: ["Would I call them in a crisis, knowing they'd be dependable?", 'Do I confide in them about things that really matter?', 'Do we connect at least monthly?'] },
+  connected: { about: 50, ask: ['Do I actively make plans with them?', 'Would I invite them to a small dinner at home?'] },
+  wider: { about: 150, ask: ['Would I invite them to a big celebration?', 'Would it feel natural to join them for a drink if I ran into them?', "Do I know what's going on in their life?"] },
+  acquaint: { about: 500, ask: ['Do I know them by name and context, but rarely seek them out?'] },
+};
+function openRingHelp() {
+  $('#ringHelpBody').innerHTML = Object.entries(RINGS).map(([k, name], i) => {
+    const h = RING_HELP[k], have = data.people.filter(p => p.closeness === k).length;
+    return `<section><div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline"><strong>${i + 1}. ${name}</strong>
+        <span class="small muted">about ${h.about} · you have ${have}</span></div>
+      <ul style="margin:4px 0 0;padding-left:20px" class="small">${h.ask.map(q => `<li>${esc(q)}</li>`).join('')}</ul></section>`;
+  }).join('');
+  $('#ringHelpDlg').showModal();
+}
+document.addEventListener('click', e => { if (e.target.closest('[data-ring-help]')) openRingHelp(); });
 
 // Placing someone: their ring now, the direction you want, and a private note on why.
 let closeFor = null;
@@ -1664,7 +1695,7 @@ function renderHome() {
     <div class="home-head">
       <div><h1>Hello again</h1><div class="muted">${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })} · ${data.people.length} ${data.people.length === 1 ? 'person' : 'people'} in your circle</div></div>
       <div class="p-actions">
-        <button class="btn" data-act="openMap">◎ Circle map</button>
+        <button class="btn" data-act="openMap">◎ Circle of Connection</button>
         <button class="btn" data-act="eventAny">Note a life event</button>
         <button class="btn primary" data-act="logAny">Log a conversation</button>
       </div>

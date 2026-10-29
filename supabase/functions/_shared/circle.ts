@@ -11,7 +11,7 @@ export const EV_LABEL: Record<string, string> = {
 };
 export const HARD = new Set(["loss", "health", "breakup", "hardship"]);
 // The rings of the user's circle, centre out, as in index.html (RINGS, DIRECTIONS).
-export const RINGS: Record<string, string> = { inner: "Inner circle", close: "Close", connected: "Connected", wider: "Wider circle", acquaint: "Acquaintances" };
+export const RINGS: Record<string, string> = { inner: "Deepest", close: "Trusted", connected: "Kindred", wider: "Community", acquaint: "Familiar" };
 export const REL_LABEL: Record<string, string> = { spouse: "spouse", partner: "partner", child: "child", parent: "parent", sibling: "sibling", grandchild: "grandchild", grandparent: "grandparent", inlaw: "in-law", other: "family", pet: "pet" };
 export const REL_REV: Record<string, string> = { spouse: "spouse", partner: "partner", child: "parent", parent: "child", sibling: "sibling", grandchild: "grandparent", grandparent: "grandchild", inlaw: "inlaw", other: "other" };
 
