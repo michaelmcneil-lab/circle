@@ -1467,7 +1467,7 @@ function renderList() {
   if (!list.length) { el.innerHTML = `<div class="empty-list">No matches.</div>`; return; }
   el.innerHTML = list.map(p => {
     const last = lastContact(p);
-    const sub = p.inMemory ? `🕊️ In memory${lifeYears(p) ? ` · ${lifeYears(p)}` : ''}` : last ? `Talked ${ago(daysSince(last))}` : 'No conversations yet';
+    const sub = p.inMemory ? `🕊️ In memory${lifeYears(p) ? ` · ${lifeYears(p)}` : ''}` : last ? `Talked ${ago(daysSince(last))}` : 'No connections yet';
     const hard = hardNow(p)[0];
     return `<button class="person-row ${p.id === ui.selected ? 'active' : ''}" data-id="${p.id}">
       ${avatar(p)}
@@ -1883,8 +1883,8 @@ function renderHome() {
             return `<li>${avatar(p)}<div class="grow">${personLink(p)}<div class="small muted">${last ? `Last talked ${ago(daysSince(last))}` : 'No conversations logged yet'}</div></div><button class="btn small" data-log="${p.id}">Log</button></li>`;
           }).join('')}</ul>` : empty('You\'re caught up with everyone who has a check-in goal. Set one when editing a person.')}
         </section>
-        <section class="card"><h2>Recent conversations</h2>
-          ${recent.length ? `<ul class="list">${recent.slice(0, 8).map(i => `<li>${avatar(firstOf(i))}<div class="grow">${peopleLinks(i.personIds)} <span class="small muted">· ${IX_TYPES[i.type]?.[0] || ''} ${fmtDate(i.date)}</span><div class="small" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(i.summary)}</div></div></li>`).join('')}</ul>` : empty('No conversations logged yet.')}
+        <section class="card"><h2>Recent connections</h2>
+          ${recent.length ? `<ul class="list">${recent.slice(0, 8).map(i => `<li>${avatar(firstOf(i))}<div class="grow">${peopleLinks(i.personIds)} <span class="small muted">· ${IX_TYPES[i.type]?.[0] || ''} ${fmtDate(i.date)}</span><div class="small" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(i.summary)}</div></div></li>`).join('')}</ul>` : empty('No connections logged yet.')}
         </section>
       </div>
     </div>
@@ -1905,7 +1905,7 @@ function renderPerson(p) {
   const pd = passedDate(p);
   const statBits = p.inMemory
     ? [`🕊️ In memory${pd ? ` · passed ${pd.y ? fmtDate(p.passedOn) : fmtBirthday(pd)}` : ''}${lifeYears(p).includes('–') ? ` · ${lifeYears(p)}` : ''}`]
-    : [last ? `Last talked ${ago(daysSince(last))}` : 'No conversations yet'];
+    : [last ? `Last talked ${ago(daysSince(last))}` : 'No connections yet'];
   const b = bday(p);
   if (b) { const a = nextOccurrence(b.m, b.d, b.y); statBits.push(p.inMemory ? `Birthday ${a.days === 0 ? 'today' : 'in ' + a.days + ' days'}${a.years ? ` · would have been ${a.years}` : ''}`
     : `Birthday ${a.days === 0 ? 'today 🎉' : 'in ' + a.days + ' days'}`); }
