@@ -14,7 +14,7 @@ import { createClient } from "npm:@supabase/supabase-js@2.117.3";
 import * as R from "../_shared/google-sync.ts";
 import type { Doc } from "../_shared/circle.ts";
 import { type Google, type Link, runSync, show, type Store } from "./sync.ts";
-import { applyEvents, eventsFrom, type Message } from "../_shared/email-activity.ts";
+import { applyEvents, emailIndex, eventsFrom, idTime, type Message, parseBatch } from "../_shared/email-activity.ts";
 import { baseline, newInGoogle, personFromGoogle } from "./new-in-google.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -31,6 +31,9 @@ const SCOPES = "openid email https://www.googleapis.com/auth/contacts";
 const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.metadata";
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
 const EMAIL_PER_RUN = 150; // messages read per run; the rest wait for the next one
+const CATCH_UP_DAYS = 21; // how far back "catch up" looks
+const CATCH_UP_MAX = 3000; // messages a catch-up reads at most
+const METADATA = "format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Bcc&metadataHeaders=Subject&metadataHeaders=List-Id&metadataHeaders=List-Unsubscribe&metadataHeaders=Precedence";
 const PHOTO_BUCKET = "photos";
 const LOCK_SECONDS = 140; // one run at a time per person, so nothing is created twice
 
@@ -277,6 +280,67 @@ async function startEmail(userId: string, token: string) {
   await admin.from("circle_google").update({ gmail_on: true, gmail_history_id: String(profile.historyId), gmail_error: null, gmail_checked_at: new Date().toISOString() }).eq("user_id", userId);
 }
 
+// ---------- Catching up on earlier email ----------
+// Walks the last CATCH_UP_DAYS of mail, newest first (a message id tells its time, so the walk
+// stops at the cut-off), reads the headers 50 at a time through Gmail's batch endpoint, and
+// logs what it finds with the usual rules. onlyEmails limits it to the people who have those
+// addresses (someone just added); without it, everyone. Messages already logged are skipped.
+async function batchMetadata(token: string, ids: string[]): Promise<Message[]> {
+  const out: Message[] = [];
+  let todo = ids;
+  for (let attempt = 0; todo.length && attempt < 4; attempt++) {
+    const retry: string[] = [];
+    for (let i = 0; i < todo.length; i += 50) {
+      const chunk = todo.slice(i, i + 50);
+      const boundary = `circle_${crypto.randomUUID()}`;
+      const body = chunk.map((id, j) => `--${boundary}\r\nContent-Type: application/http\r\nContent-ID: <m${j}>\r\n\r\nGET /gmail/v1/users/me/messages/${id}?${METADATA}\r\n\r\n`).join("") + `--${boundary}--`;
+      const res = await fetch("https://gmail.googleapis.com/batch/gmail/v1", {
+        method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": `multipart/mixed; boundary=${boundary}` }, body, signal: AbortSignal.timeout(30000),
+      });
+      if (!res.ok) { retry.push(...chunk); continue; }
+      const replyBoundary = (res.headers.get("content-type") ?? "").match(/boundary=([^;]+)/)?.[1]?.replace(/"/g, "") ?? "";
+      // Each part names the request it answers (Content-ID m<j>), so order doesn't matter.
+      const parts = new Map(parseBatch(await res.text(), replyBoundary).map((x) => [x.id, x]));
+      chunk.forEach((id, j) => {
+        const part = parts.get(`m${j}`);
+        if (part?.status === 200 && part.body?.id) out.push(part.body);
+        else if (part?.status === 429 || (part?.status ?? 0) >= 500 || !part) retry.push(id); // busy: once more after a pause
+      });
+    }
+    todo = retry;
+    if (todo.length) await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+  }
+  return out;
+}
+async function catchUp(userId: string, token: string, onlyEmails?: Set<string>): Promise<{ logged: number; read: number }> {
+  const since = Date.now() - CATCH_UP_DAYS * 864e5;
+  const ids: string[] = [];
+  let page = "";
+  walk: do {
+    const r = await gmail(token, `messages?maxResults=500${page ? `&pageToken=${page}` : ""}`);
+    for (const m of r.messages ?? []) {
+      if (idTime(m.id) < since) break walk;
+      ids.push(m.id);
+      if (ids.length >= CATCH_UP_MAX) break walk;
+    }
+    page = r.nextPageToken ?? "";
+  } while (page);
+  const messages = await batchMetadata(token, ids);
+  const acct = await account(userId);
+  const { data: s } = await admin.from("circle_settings").select("time_zone").eq("user_id", userId).maybeSingle();
+  const store = supabaseStore(userId);
+  // A device saving at the same moment: read Circle again and redo (the messages are kept).
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const loaded = await store.loadDoc();
+    if (!loaded) return { logged: 0, read: messages.length };
+    const people = (loaded.doc.people ?? []).filter((p: Any) => !onlyEmails || (p.emails ?? []).some((e: Any) => onlyEmails.has(String(e.value ?? "").trim().toLowerCase())));
+    if (!people.length) return { logged: 0, read: messages.length };
+    const logged = applyEvents(loaded.doc, eventsFrom(messages, people, acct?.google_email ?? "", s?.time_zone || "America/Los_Angeles"));
+    if (!logged || await store.saveDoc(loaded.doc, loaded.rev)) return { logged, read: messages.length };
+  }
+  return { logged: 0, read: messages.length };
+}
+
 async function emailUser(userId: string): Promise<{ logged: number; read: number; busy?: boolean }> {
   const acct = await account(userId);
   if (!acct?.refresh_token || !acct.gmail_on) return { logged: 0, read: 0 };
@@ -313,7 +377,7 @@ async function emailUser(userId: string): Promise<{ logged: number; read: number
     const messages: Message[] = [];
     for (const id of ids) {
       try {
-        messages.push(await gmail(token, `messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Bcc&metadataHeaders=Subject&metadataHeaders=List-Id&metadataHeaders=List-Unsubscribe&metadataHeaders=Precedence`));
+        messages.push(await gmail(token, `messages/${id}?${METADATA}`));
       } catch (err) {
         if ((err as { status?: number }).status !== 404) throw err; // deleted since: skip it
       }
@@ -330,9 +394,18 @@ async function emailUser(userId: string): Promise<{ logged: number; read: number
         if (logged && !(await store.saveDoc(loaded.doc, loaded.rev))) return { logged: 0, read: 0, busy: true };
       }
     }
+    // Someone added to Circle (or given a new address) since the last run: their recent email
+    // came in before Circle knew them, so look back for it. The addresses Circle knew last time
+    // are kept with the run's summary; the first time, they're only noted.
+    const now2 = (await supabaseStore(userId).loadDoc())?.doc;
+    const known = [...emailIndex(now2?.people ?? []).keys()];
+    const before = Array.isArray(acct.gmail_last?.known) ? new Set<string>(acct.gmail_last.known) : null;
+    const fresh = before ? known.filter((e) => !before.has(e)) : [];
+    let caught = { logged: 0, read: 0 };
+    if (fresh.length) caught = await catchUp(userId, token, new Set(fresh));
     await admin.from("circle_google").update({ gmail_history_id: upTo, gmail_checked_at: new Date().toISOString(), gmail_error: null,
-      gmail_last: { at: new Date().toISOString(), read: messages.length, logged } }).eq("user_id", userId);
-    return { logged, read: messages.length };
+      gmail_last: { at: new Date().toISOString(), read: messages.length, logged: logged + caught.logged, known, ...(fresh.length ? { caughtUp: fresh.length } : {}) } }).eq("user_id", userId);
+    return { logged: logged + caught.logged, read: messages.length };
   } catch (err) {
     await admin.from("circle_google").update({ gmail_error: msg(err), ...(err instanceof NeedsReconnect ? { refresh_token: null } : {}) }).eq("user_id", userId);
     throw err;
@@ -539,6 +612,11 @@ async function handle(req: Request): Promise<Response> {
       return json({ ok: true });
     }
     case "email_check": return json(await emailUser(uid));
+    case "email_catch_up": {
+      const acct = await account(uid);
+      if (!acct?.refresh_token || !acct.gmail_on) return json({ error: "Turn email activity on first." }, 400);
+      return json(await withLock(uid, async () => catchUp(uid, await accessToken(acct.refresh_token!))));
+    }
     case "disconnect": {
       const acct = await account(uid);
       if (acct?.refresh_token) await fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(acct.refresh_token)}`, { method: "POST" }).catch(() => {});

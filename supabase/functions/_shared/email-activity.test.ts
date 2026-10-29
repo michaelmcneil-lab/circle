@@ -1,6 +1,6 @@
 // Tests for turning Gmail headers into Circle conversations.
 // Run: deno test supabase/functions/_shared/email-activity.test.ts
-import { applyEvents, cleanSubject, emailsIn, eventsFrom, type Message } from "./email-activity.ts";
+import { applyEvents, cleanSubject, emailsIn, eventsFrom, idTime, type Message, parseBatch } from "./email-activity.ts";
 
 const eq = (a: unknown, b: unknown, msg = "") => { const x = JSON.stringify(a), y = JSON.stringify(b); if (x !== y) throw new Error(`${msg}\n  got:  ${x}\n  want: ${y}`); };
 
@@ -61,6 +61,28 @@ Deno.test("a note the user rewrote is kept", () => {
   applyEvents(doc, eventsFrom([msg("b", ["SENT"], { To: "anna@example.com", Subject: "Restaurant" })], people, ME, TZ));
   eq(doc.interactions[0].summary, "Planned dinner for her birthday");
   eq(doc.interactions[0].emailSubjects, ["Dinner", "Restaurant"]);
+});
+
+Deno.test("a message id tells its time to within seconds", () => {
+  const ms = idTime("1a182efc0fa3cf48"); // a real message: 2026-10-28T14:34:59Z
+  eq(Math.abs(ms - Date.parse("2026-10-28T14:34:59Z")) < 60_000, true);
+});
+
+Deno.test("a batch reply is read part by part", () => {
+  const b = "batch_abc";
+  // Parts arrive out of order; each names the request it answers.
+  const text = `--${b}\r\nContent-Type: application/http\r\nContent-ID: <response-m2>\r\n\r\nHTTP/1.1 404 Not Found\r\n\r\n\r\n`
+    + `--${b}\r\nContent-Type: application/http\r\nContent-ID: <response-m0>\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{"id":"m1","payload":{"headers":[{"name":"Subject","value":"Hi {there}"}]}}\r\n`
+    + `--${b}\r\nContent-Type: application/http\r\nContent-ID: <response-m1>\r\n\r\nHTTP/1.1 429 Too Many Requests\r\n\r\n{"error":{"code":429}}\r\n--${b}--`;
+  const parts = new Map(parseBatch(text, b).map((p) => [p.id, p]));
+  eq(["m0", "m1", "m2"].map((k) => parts.get(k)?.status), [200, 429, 404]);
+  eq(parts.get("m0")!.body.payload.headers[0].value, "Hi {there}");
+  eq(parts.get("m2")!.body, null);
+});
+Deno.test("a one-part batch reply", () => {
+  const b = "x";
+  const parts = parseBatch(`--${b}\r\nContent-ID: <response-m0>\r\n\r\nHTTP/1.1 200 OK\r\n\r\n{}\r\n--${b}--`, b);
+  eq(parts.map((p) => [p.id, p.status]), [["m0", 200]]);
 });
 
 Deno.test("someone removed from Circle gets nothing", () => {

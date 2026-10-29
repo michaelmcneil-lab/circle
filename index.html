@@ -754,7 +754,9 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
       <span class="hint">Adds an Email entry to someone's timeline when you email them, or they email you, with the subject as the note. One entry per person per day. Skips mailing lists and emails to more than 5 people. Circle sees only who, when and the subject, never what the email says.</span>
       <p class="small" style="margin:0" id="gcEmailStatus"></p>
       <div class="p-actions"><button type="button" class="btn" id="gcEmailToggle">Turn on</button>
-        <button type="button" class="btn ghost" id="gcEmailCheck" hidden>Check now</button></div>
+        <button type="button" class="btn ghost" id="gcEmailCheck" hidden>Check now</button>
+        <button type="button" class="btn ghost" id="gcEmailCatchUp" hidden>Catch up on the last 3 weeks</button></div>
+      <span class="hint" id="gcEmailCatchUpHint" hidden>When someone is added to Circle, Circle looks back 3 weeks for emails with them by itself. Use Catch up to look back for everyone.</span>
     </section>
     <section class="stack" style="gap:8px" id="gcConflictsBox" hidden>
       <strong>Different in Circle and Google</strong>
@@ -3407,6 +3409,8 @@ async function loadGoogle() {
   $('#gcEmailToggle').textContent = ea.on ? 'Turn off' : 'Turn on';
   $('#gcEmailToggle').classList.toggle('primary', !ea.on);
   $('#gcEmailCheck').hidden = !ea.on;
+  $('#gcEmailCatchUp').hidden = !ea.on;
+  $('#gcEmailCatchUpHint').hidden = !ea.on;
   $('#gcEmailStatus').innerHTML = !ea.on ? 'Off.' + (ea.allowed ? '' : ' Turning it on asks Google for permission to see your email headers.')
     : `On. ${ea.last ? `Last checked ${gcWhen(ea.last.at)}: ${ea.last.logged ? `${ea.last.logged} ${ea.last.logged === 1 ? 'entry' : 'entries'} added or updated` : 'nothing new with your people'}.` : 'Emails from now on will appear within about 5 minutes.'}`
       + (ea.error ? `<br>⚠ ${esc(ea.error)}` : '');
@@ -3488,6 +3492,13 @@ $('#gcEmailToggle').addEventListener('click', () => {
     toast(on ? 'Email activity is off.' : 'Email activity is on. Emails from now on will appear within about 5 minutes.');
   });
 });
+// Looks back 3 weeks for emails with everyone in Circle (they're read in batches; it can
+// take a minute). Emails already logged aren't added again.
+$('#gcEmailCatchUp').addEventListener('click', () => gcBusy($('#gcEmailCatchUp'), 'Looking back… (about a minute)', async () => {
+  const r = await gcCall('email_catch_up');
+  toast(r.logged ? `Looked through ${r.read} emails: ${r.logged} ${r.logged === 1 ? 'entry' : 'entries'} added or updated.` : `Looked through ${r.read} emails: nothing was missing.`);
+  await loadGoogle(); syncNow();
+}));
 $('#gcEmailCheck').addEventListener('click', () => gcBusy($('#gcEmailCheck'), 'Checking…', async () => {
   const r = await gcCall('email_check');
   toast(r.busy ? 'Circle was busy. Try again in a moment.' : r.logged ? `${r.logged} ${r.logged === 1 ? 'entry' : 'entries'} added or updated.` : 'Nothing new with your people.');

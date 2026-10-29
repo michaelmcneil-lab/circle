@@ -70,6 +70,26 @@ export function eventsFrom(messages: Message[], people: Any[], me: string, timeZ
   return out;
 }
 
+// ---------- Catching up on earlier email ----------
+// Circle's Gmail permission (headers only) can't search, so catching up walks recent mail
+// newest first. A Gmail message id carries its time (the id's top bits are milliseconds
+// since 1970, within seconds), so the walk stops at the cut-off without opening older mail.
+export const idTime = (id: string) => Number(BigInt(`0x${id}`) >> 20n);
+
+// Gmail's batch endpoint answers many requests in one multipart reply: each part holds an
+// HTTP status line and a JSON body, labelled with the Content-ID of the request it answers
+// ("response-<id>"). Returns { id, status, body } per part.
+export function parseBatch(text: string, boundary: string): { id: string; status: number; body: Any }[] {
+  return text.split(`--${boundary}`).slice(1).filter((part) => !part.startsWith("--")).map((part) => {
+    const id = part.match(/Content-ID:\s*<?response-([^>\s]+)>?/i)?.[1] ?? "";
+    const status = Number(part.match(/HTTP\/[\d.]+ (\d{3})/)?.[1] ?? 0);
+    const start = part.indexOf("{"), end = part.lastIndexOf("}");
+    let body: Any = null;
+    if (start >= 0 && end > start) { try { body = JSON.parse(part.slice(start, end + 1)); } catch { body = null; } }
+    return { id, status, body };
+  });
+}
+
 const summaryOf = (subjects: string[]) =>
   subjects.slice(0, MAX_SUBJECTS).join(" · ") + (subjects.length > MAX_SUBJECTS ? ` (+${subjects.length - MAX_SUBJECTS} more)` : "");
 
