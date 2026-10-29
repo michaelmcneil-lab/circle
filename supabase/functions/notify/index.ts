@@ -81,6 +81,7 @@ async function push(userId: string, payload: Payload) {
 // which keeps them on the right date in every time zone.
 type Meeting = { key: string; start: Date; end: Date; title: string; personIds: string[]; attendees: number; allDay: boolean; date: string };
 const DAYS_AHEAD = 31;
+const DAYS_BACK = 7; // past events kept for the app's Recent events (to log or correct who was there)
 
 // Turns a calendar feed into meetings between `from` and `to` that include someone in Circle.
 // A calendar feed can hold many years of events (iCloud family calendars often do),
@@ -240,12 +241,12 @@ async function linksFor(userId: string): Promise<Link[]> {
   return data ?? [];
 }
 
-// Re-reads every connected calendar and records meetings from yesterday to two days
-// ahead. A calendar that fails doesn't stop the others; its error is kept on its link.
+// Re-reads every connected calendar and records events from a week ago (DAYS_BACK) to a
+// month ahead (DAYS_AHEAD). A calendar that fails doesn't stop the others; its error is kept on its link.
 async function refreshAgenda(userId: string, doc: Doc) {
   const links = await linksFor(userId);
   if (!links.length) return null;
-  const now = Date.now(), from = new Date(now - 864e5), to = new Date(now + DAYS_AHEAD * 864e5);
+  const now = Date.now(), from = new Date(now - DAYS_BACK * 864e5), to = new Date(now + DAYS_AHEAD * 864e5);
   const self = await userEmail(userId);
   const byKey = new Map<string, Meeting & { calendar: string }>();
   const seen = new Set<string>(); // title + start, to spot the same event in two calendars

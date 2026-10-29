@@ -558,16 +558,16 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
 <!-- Interaction dialog -->
 <dialog id="ixDlg">
   <form id="ixForm">
-    <h3 id="ixDlgTitle">Log a conversation</h3>
+    <h3 id="ixDlgTitle">Log a connection</h3>
     <div class="field"><span>Who was there</span>
       <div class="chipset" id="ixPeople"></div>
-      <select id="ixAddPerson" class="people-pick" aria-label="Add a person to this conversation"></select>
+      <select id="ixAddPerson" class="people-pick" aria-label="Add someone who was there"></select>
     </div>
     <div class="field-row">
       <label class="field"><span>Date</span><input type="date" name="date" required></label>
       <label class="field"><span>How</span><select name="type"></select></label>
     </div>
-    <label class="field"><span>What did you talk about?</span><textarea name="summary" rows="4" required></textarea></label>
+    <label class="field"><span>What happened?</span><textarea name="summary" rows="4" required placeholder="What you talked about, or what you did together"></textarea></label>
     <div class="field-row" style="grid-template-columns: 2fr 1fr">
       <label class="field"><span>Follow up / ask about next time</span><input type="text" name="followUp" placeholder="e.g. Ask how the job interview went"></label>
       <label class="field"><span>By (optional)</span><input type="date" name="followUpDue"></label>
@@ -891,7 +891,8 @@ const LS_KEY = 'circle-data-v1';
 const RELATIONSHIPS = ['Family', 'Close friend', 'Friend', 'Colleague', 'Neighbor', 'Other'];
 const IX_TYPES = {
   call: ['📞', 'Phone call'], text: ['💬', 'Texted'], inperson: ['☕', 'In person'],
-  video: ['🎥', 'Video call'], email: ['✉️', 'Email'], social: ['📱', 'Social media'], card: ['💌', 'Card / letter']
+  video: ['🎥', 'Video call'], email: ['✉️', 'Email'], social: ['📱', 'Social media'], card: ['💌', 'Card / letter'],
+  event: ['🎭', 'Event together']
 };
 const EV_TYPES = {
   birth: ['👶', 'Birth / adoption'], wedding: ['💍', 'Engagement / wedding'], graduation: ['🎓', 'Graduation'],
@@ -1769,7 +1770,7 @@ function renderHome() {
   if (!data.people.length) {
     main.innerHTML = `<div class="wrap"><div class="welcome">
       <h1>Keep your people close</h1>
-      <p>Add friends and family, log your conversations, and note the big moments in their lives. Circle reminds you of birthdays and who you haven't caught up with in a while.</p>
+      <p>Add friends and family, log your time together, and note the big moments in their lives. Circle reminds you of birthdays and who you haven't caught up with in a while.</p>
       <button class="btn primary" data-act="addPerson">Add your first person</button>
       <button class="btn" data-act="importContacts">Import contacts</button>
       <button class="btn" data-act="sample">Try with sample people</button>
@@ -1849,12 +1850,13 @@ function renderHome() {
       <div class="p-actions">
         <button class="btn" data-act="openMap">◎ Circle of Connection</button>
         <button class="btn" data-act="eventAny">Note a life event</button>
-        <button class="btn primary" data-act="logAny">Log a conversation</button>
+        <button class="btn primary" data-act="logAny">Log a connection</button>
       </div>
     </div>
     ${todayCard()}
     ${quickNoteCard()}
     ${inboxCard()}
+    ${recentCard()}
     ${hard.length ? `<section class="card hard-card" style="margin-bottom:16px"><h2>Going through something</h2>
       <ul class="list">${hard.map(({ p, e }) => `<li>${avatar(p)}<div class="grow">${personLink(p)}
         <div class="small">${EV_TYPES[e.type][0]} ${esc(e.title)} <span class="muted">· ${when(e.date).toLowerCase()}</span></div>
@@ -1863,7 +1865,7 @@ function renderHome() {
     <div class="grid2">
       <div class="stack">
         <section class="card"><div class="card-head"><h2>Follow-ups</h2><button class="btn ghost small" data-act="addFollowUp">+ Add</button></div>
-          ${follows.length ? followUpGroups(follows, null, 12) : empty('Nothing to follow up on. Add one here or when you log a conversation.')}
+          ${follows.length ? followUpGroups(follows, null, 12) : empty('Nothing to follow up on. Add one here or when you log a connection.')}
         </section>
         <section class="card"><h2>Coming up · next ${REMIND_DAYS} days</h2>
           ${upcoming.length ? `<ul class="list">${upcoming.map(u => {
@@ -2019,7 +2021,7 @@ function renderPerson(p) {
         <div class="chips">${chips.join('')}</div>
       </div>
       <div class="p-actions">
-        <button class="btn primary" data-log="${p.id}">Log conversation</button>
+        <button class="btn primary" data-log="${p.id}">Log a connection</button>
         <button class="btn" data-act="addEvent">Add life event</button>
         <button class="btn" data-act="editPerson">Edit</button>
         <button class="btn ghost danger" data-act="delPerson">Delete</button>
@@ -2038,8 +2040,8 @@ function renderPerson(p) {
         <section class="card"><div class="card-head"><h2>Follow-ups</h2><button class="btn ghost small" data-act="addFollowUp">+ Add</button></div>
           ${openFollows.length ? followUpGroups(openFollows, p.id) : '<p class="muted small" style="margin:0">Nothing to follow up on.</p>'}</section>
         <section class="card"><h2>Timeline</h2>
-          <div class="tl-filter">${tlBtn('all', 'Everything')}${tlBtn('ix', 'Conversations')}${tlBtn('ev', 'Life events')}</div>
-          ${tl ? `<ul class="timeline">${tl}</ul>` : '<p class="muted small" style="margin:0">Nothing here yet. Log a conversation or add a life event.</p>'}
+          <div class="tl-filter">${tlBtn('all', 'Everything')}${tlBtn('ix', 'Connections')}${tlBtn('ev', 'Life events')}</div>
+          ${tl ? `<ul class="timeline">${tl}</ul>` : '<p class="muted small" style="margin:0">Nothing here yet. Log a connection or add a life event.</p>'}
         </section>
       </div>
     </div>
@@ -2317,17 +2319,19 @@ $('#ixPeople').addEventListener('click', e => {
   if (b) { ixPicked = ixPicked.filter(id => id !== b.dataset.unpick); renderIxPeople(); }
 });
 
-function openIxDlg(personId, ix) {
+// pre: a new connection filled in from a calendar event ({ personIds, date, type, summary, eventKey }).
+function openIxDlg(personId, ix, pre) {
   const f = $('#ixForm');
   f.reset();
   f.dataset.id = ix ? ix.id : '';
-  ixPicked = ix ? [...ix.personIds] : personId ? [personId] : [];
+  f.dataset.eventKey = pre?.eventKey || '';
+  ixPicked = ix ? [...ix.personIds] : pre ? [...pre.personIds] : personId ? [personId] : [];
   renderIxPeople();
   $('#ixDoneField').style.display = ix ? '' : 'none';
-  $('#ixDlgTitle').textContent = ix ? 'Edit conversation' : 'Log a conversation';
-  f.date.value = ix ? ix.date : todayStr();
-  f.type.value = ix ? ix.type : 'call';
-  f.summary.value = ix ? ix.summary : '';
+  $('#ixDlgTitle').textContent = ix ? 'Edit connection' : 'Log a connection';
+  f.date.value = ix ? ix.date : pre?.date || todayStr();
+  f.type.value = ix ? ix.type : pre?.type || 'call';
+  f.summary.value = ix ? ix.summary : pre?.summary || '';
   const fu = ix && data.followUps.find(x => x.ixId === ix.id);
   f.followUp.value = fu ? fu.text : '';
   f.followUpDue.value = fu ? fu.due : '';
@@ -2345,7 +2349,7 @@ $('#ixForm').addEventListener('submit', e => {
   }
   const vals = { personIds: [...ixPicked], date: f.date.value, type: f.type.value, summary: f.summary.value.trim() };
   let ix = f.dataset.id && data.interactions.find(i => i.id === f.dataset.id);
-  if (ix) Object.assign(ix, vals); else { ix = { id: uid(), ...vals }; data.interactions.push(ix); }
+  if (ix) Object.assign(ix, vals); else { ix = { id: uid(), ...vals, ...(f.dataset.eventKey ? { eventKey: f.dataset.eventKey } : {}) }; data.interactions.push(ix); }
   // The follow-up typed here lives in the follow-up list, linked back to this conversation.
   const text = f.followUp.value.trim();
   const fu = data.followUps.find(x => x.ixId === ix.id);
@@ -2751,7 +2755,7 @@ function quickNoteCard() {
   </section>`;
 }
 const SOURCE_LABEL = { 'quick-note': 'Quick note', voice: 'Voice note', share: 'Shared', screenshot: 'Screenshot', claude: 'From Claude' };
-const RV_KIND = { conversation: 'Log conversation', follow_up: 'Follow-up', life_event: 'Life event', note: 'Add to notes', detail: 'Update contact details' };
+const RV_KIND = { conversation: 'Log a connection', follow_up: 'Follow-up', life_event: 'Life event', note: 'Add to notes', detail: 'Update contact details' };
 // Contact details a suggestion can set. Keep in step with DETAIL_FIELDS in supabase/functions/capture.
 const DETAIL_FIELDS = { birthday: 'Birthday', phone: 'Phone', email: 'Email', address: 'Address', company: 'Company', job_title: 'Job title', nickname: 'Nickname',
   closeness: 'Place in your circle', direction: 'Direction' };
@@ -3046,9 +3050,9 @@ document.addEventListener('click', e => {
 });
 async function loadAgenda() {
   if (!sync.user) return;
-  // From the start of today (a few hours earlier, so all-day events dated today are
-  // included) to a month ahead: today's meetings for the Today card, the rest for Coming up.
-  const start = new Date(); start.setHours(0, 0, 0, 0); start.setHours(-14);
+  // From a week ago (for Recent events) to a month ahead: today's meetings for the Today
+  // card, the rest for Coming up. A few extra hours, so all-day events on the first day count.
+  const start = new Date(); start.setHours(0, 0, 0, 0); start.setDate(start.getDate() - RECENT_DAYS); start.setHours(-14);
   const end = new Date(); end.setDate(end.getDate() + REMIND_DAYS + 1);
   const { data: rows, error } = await sync.client.from('circle_agenda')
     .select('event_key, start_at, end_at, title, person_ids, attendee_count, all_day, start_date, calendar_label')
@@ -3096,6 +3100,36 @@ function personCalendarCard(p) {
   }).join('');
   return `<section class="card" style="margin-bottom:16px"><h2>On your calendar</h2><ul class="list">${rows}</ul></section>`;
 }
+// Calendar events from the past week, newest first: fix who was there with Who?, and log
+// the ones shared with people as a connection (filled in from the event). Once logged, an
+// event shows ✓ Logged (the connection remembers the event's key).
+const RECENT_DAYS = 7;
+function recentCard() {
+  const now = Date.now();
+  const past = agenda.filter(m => {
+    const days = daysSince(eventDate(m));
+    const over = m.all_day ? days >= 1 : new Date(m.end_at).getTime() <= now;
+    return over && days <= RECENT_DAYS;
+  }).sort((a, b) => b.start_at.localeCompare(a.start_at)).slice(0, 12);
+  if (!past.length) return '';
+  const logged = new Set(data.interactions.map(i => i.eventKey).filter(Boolean));
+  const rows = past.map(m => {
+    const at = m.all_day ? `${fmtDay(eventDate(m))} · All day` : `${fmtDay(eventDate(m))} · ${new Date(m.start_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+    const who = m.person_ids.some(getPerson) ? ` · with ${peopleLinks(m.person_ids)}` : ' · no one from Circle yet';
+    return `<li><div class="avatar" style="--h:210" aria-hidden="true">📅</div>
+      <div class="grow"><strong>${esc(m.title || 'Event')}</strong><div class="small muted">${at}${who}</div></div>
+      ${whoBtn(m)}${logged.has(m.event_key) ? '<span class="pill accent">✓ Logged</span>'
+        : `<button type="button" class="btn small primary" data-log-event="${esc(m.event_key)}">Log it</button>`}</li>`;
+  }).join('');
+  return `<section class="card" style="margin-bottom:16px"><h2>Recent events</h2>
+    <p class="small muted" style="margin:0 0 8px">The past week from your calendar. Log the ones you shared with people.</p><ul class="list">${rows}</ul></section>`;
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-log-event]');
+  if (!b) return;
+  const m = agenda.find(x => x.event_key === b.dataset.logEvent);
+  if (m) openIxDlg(null, null, { personIds: m.person_ids.filter(id => getPerson(id)), date: eventDate(m), type: 'event', summary: m.title || '', eventKey: m.event_key });
+});
 function todayCard() {
   const meetings = agenda.filter(m => !m.all_day && eventDate(m) === todayStr())
     .map(m => ({ ...m, people: m.person_ids.map(getPerson).filter(Boolean) })).filter(m => m.people.length);

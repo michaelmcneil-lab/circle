@@ -4,7 +4,7 @@
 // deno-lint-ignore no-explicit-any
 // eventLinks: who calendar events are with, as corrected by the user ({ id: event UID or one meeting's key, personIds }).
 export type Doc = { people: any[]; interactions: any[]; followUps: any[]; relations: any[]; eventLinks?: any[] };
-export const IX_LABEL: Record<string, string> = { call: "Phone call", text: "Texted", inperson: "In person", video: "Video call", email: "Email", social: "Social media", card: "Card / letter" };
+export const IX_LABEL: Record<string, string> = { call: "Phone call", text: "Texted", inperson: "In person", video: "Video call", email: "Email", social: "Social media", card: "Card / letter", event: "Event together" };
 export const EV_LABEL: Record<string, string> = {
   birth: "Birth / adoption", wedding: "Engagement / wedding", graduation: "Graduation", job: "New job / career", move: "Moved",
   travel: "Big trip", milestone: "Milestone", loss: "Loss / death", health: "Health", breakup: "Divorce / breakup", hardship: "Job loss / hard time", other: "Other",
