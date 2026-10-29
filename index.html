@@ -3769,9 +3769,15 @@ async function openDelete(p) {
   $('#delDlg').showModal();
   if (!sync.user || !navigator.onLine) return;
   $('#delChecking').hidden = false;
-  try { delLinked = !!(await gcCall('google_link', { personId: p.id })).linked; } catch (e) { delLinked = false; }
-  $('#delChecking').hidden = true;
-  if (delTarget === p) $('#delGoogleRow').hidden = !delLinked;
+  $('#delChecking').textContent = 'Checking Google…';
+  // If Google can't be checked, the choice is offered anyway (the server deletes only a contact
+  // that's really linked), and the reason is shown: never a plain delete without saying so.
+  let unsure = false;
+  try { delLinked = !!(await gcCall('google_link', { personId: p.id })).linked; } catch (e) { delLinked = true; unsure = true; }
+  if (delTarget !== p) return;
+  $('#delChecking').hidden = !unsure;
+  $('#delChecking').textContent = unsure ? "Couldn't check Google just now. If they're there, they'll be deleted from Google too." : '';
+  $('#delGoogleRow').hidden = !delLinked;
 }
 function removePerson(p) {
   deletePhoto(p);
@@ -3794,8 +3800,8 @@ $('#delForm').addEventListener('submit', async e => {
     const alsoGoogle = $('#delGoogle').checked;
     btn.textContent = alsoGoogle ? 'Deleting from Google…' : 'Deleting…';
     try {
-      await gcCall(alsoGoogle ? 'delete_from_google' : 'unlink', { personId: p.id });
-      if (alsoGoogle) note = ' and from Google Contacts';
+      const r = await gcCall(alsoGoogle ? 'delete_from_google' : 'unlink', { personId: p.id });
+      if (alsoGoogle) note = r.deleted ? ' and from Google Contacts' : " (they weren't linked to a Google contact, so nothing was deleted there)";
     } catch (err) {
       btn.textContent = 'Delete'; btn.disabled = false;
       if (!confirm(`Couldn't ${alsoGoogle ? 'delete them from Google' : 'reach Google'}: ${err.message}\n\nDelete ${p.name} from Circle only? Their Google contact stays.`)) return;

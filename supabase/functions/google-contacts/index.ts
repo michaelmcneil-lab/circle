@@ -177,11 +177,26 @@ async function syncUser(userId: string, opt: { apply: boolean; personIds?: strin
   }
 }
 
+// Runs fn while holding the same lock a sync holds, waiting up to ~30 s for a sync in
+// progress to finish. Used by deletes, so a sync running at the same moment can't write an
+// old copy of the link back over the change.
+async function withLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    const now = new Date();
+    const { data: got } = await admin.from("circle_google").update({ running_until: new Date(+now + LOCK_SECONDS * 1000).toISOString() })
+      .eq("user_id", userId).or(`running_until.is.null,running_until.lt.${now.toISOString()}`).select("user_id");
+    if (got?.length) break;
+    if (attempt >= 15) throw new Error("Circle is busy syncing with Google. Try again in a minute.");
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  try { return await fn(); } finally { await admin.from("circle_google").update({ running_until: null }).eq("user_id", userId); }
+}
+
 // What the app shows: connection, the last run, open conflicts and flags.
 async function status(userId: string) {
   const acct = await account(userId);
   if (!acct) return { connected: false };
-  const { data: links } = await admin.from("circle_google_links").select("person_id, status, conflicts").eq("user_id", userId);
+  const { data: links } = await admin.from("circle_google_links").select("person_id, status, conflicts, snapshot").eq("user_id", userId);
   const { data: row } = await admin.from("circle_data").select("data").eq("user_id", userId).maybeSingle();
   const name = (id: string) => (row?.data?.people ?? []).find((p: Any) => p.id === id)?.name ?? "Someone";
   const inCircle = (id: string) => (row?.data?.people ?? []).some((p: Any) => p.id === id);
@@ -192,7 +207,9 @@ async function status(userId: string) {
     // People deleted from Circle keep an "excluded" link; only those still in Circle are listed.
     excluded: (links ?? []).filter((l) => l.status === "excluded" && inCircle(l.person_id)).map((l) => ({ personId: l.person_id, name: name(l.person_id) })),
     conflicts: (links ?? []).flatMap((l) => (l.conflicts ?? []).map((c: R.Conflict) => ({ personId: l.person_id, name: name(l.person_id), group: c.group, circle: show(c.group, c.circle), google: show(c.group, c.google) }))),
-    flags: (links ?? []).filter((l) => l.status === "google_deleted" || l.status === "circle_deleted").map((l) => ({ personId: l.person_id, name: name(l.person_id), kind: l.status })),
+    // Someone deleted from Circle has no name there any more: use the one both sides last agreed on.
+    flags: (links ?? []).filter((l) => l.status === "google_deleted" || l.status === "circle_deleted").map((l) => ({ personId: l.person_id, kind: l.status,
+      name: inCircle(l.person_id) ? name(l.person_id) : [l.snapshot?.name?.first, l.snapshot?.name?.last].filter(Boolean).join(" ") || "Someone" })),
   };
 }
 
@@ -414,14 +431,18 @@ async function handle(req: Request): Promise<Response> {
       await admin.from("circle_google_links").delete().eq("user_id", uid).eq("person_id", String(body.personId)).eq("status", "excluded");
       return json({ ok: true });
     }
-    case "resolve_flag": {
+    case "resolve_flag": return json(await withLock(uid, async () => {
       const pid = String(body.personId);
       const { data: link } = await admin.from("circle_google_links").select("*").eq("user_id", uid).eq("person_id", pid).maybeSingle();
-      if (!link) return json({ error: "Nothing to resolve" }, 400);
+      if (!link) throw new Error("Nothing to resolve");
       if (link.status === "circle_deleted" && body.choice === "delete_google") {
         // Google keeps deleted contacts in its Trash for 30 days.
         const acct = await account(uid);
-        await googleApi(await accessToken(acct!.refresh_token!)).remove(link.resource_name);
+        try {
+          await googleApi(await accessToken(acct!.refresh_token!)).remove(link.resource_name);
+        } catch (err) {
+          if ((err as { status?: number }).status !== 404) throw err; // already gone from Google: nothing left to delete
+        }
         await supabaseStore(uid).removeLink(pid);
       } else if (link.status === "circle_deleted") {
         await supabaseStore(uid).removeLink(pid); // keep the Google contact, stop tracking it
@@ -430,8 +451,8 @@ async function handle(req: Request): Promise<Response> {
       } else if (link.status === "google_deleted") {
         await supabaseStore(uid).saveLink({ ...link, status: "excluded", resource_name: null }); // Circle only from now on
       }
-      return json({ ok: true });
-    }
+      return { ok: true };
+    }));
     case "new_in_google": {
       const acct = await account(uid);
       if (!acct?.refresh_token) return json({ candidates: [] });
@@ -482,20 +503,22 @@ async function handle(req: Request): Promise<Response> {
     case "unlink": {
       const pid = String(body.personId);
       const store = supabaseStore(uid);
-      const { data: link } = await admin.from("circle_google_links").select("*").eq("user_id", uid).eq("person_id", pid).maybeSingle();
-      if (!link?.resource_name) return json({ ok: true });
-      if (body.action === "delete_from_google") {
-        const acct = await account(uid);
-        if (!acct?.refresh_token) return json({ error: "Google isn't connected." }, 400);
-        try {
-          // Google keeps deleted contacts in its Trash for 30 days.
-          await googleApi(await accessToken(acct.refresh_token)).remove(link.resource_name);
-        } catch (err) {
-          if ((err as { status?: number }).status !== 404) throw err; // already gone from Google
+      return json(await withLock(uid, async () => {
+        const { data: link } = await admin.from("circle_google_links").select("*").eq("user_id", uid).eq("person_id", pid).maybeSingle();
+        if (!link?.resource_name) return { ok: true, deleted: false }; // not linked to a Google contact: nothing to delete there
+        if (body.action === "delete_from_google") {
+          const acct = await account(uid);
+          if (!acct?.refresh_token) throw new Error("Google isn't connected.");
+          try {
+            // Google keeps deleted contacts in its Trash for 30 days.
+            await googleApi(await accessToken(acct.refresh_token)).remove(link.resource_name);
+          } catch (err) {
+            if ((err as { status?: number }).status !== 404) throw err; // already gone from Google
+          }
         }
-      }
-      await store.saveLink({ ...link, status: "excluded", resource_name: null, conflicts: [] });
-      return json({ ok: true });
+        await store.saveLink({ ...link, status: "excluded", resource_name: null, conflicts: [] });
+        return { ok: true, deleted: body.action === "delete_from_google" };
+      }));
     }
     case "dismiss_google": {
       const acct = await account(uid);
