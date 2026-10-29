@@ -198,6 +198,8 @@ h2 { font-size: 15px; margin: 0 0 10px; text-transform: uppercase; letter-spacin
 .list .grow { flex: 1; min-width: 0; }
 .linkish { background: none; border: 0; padding: 0; cursor: pointer; font-weight: 600; text-align: left; }
 .linkish:hover { text-decoration: underline; }
+.recent-card > summary { cursor: pointer; }
+.recent-card > summary h2 { margin: 0; }
 .pill { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink-2); white-space: nowrap; }
 .pill.accent { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
 .pill.warn { background: var(--warn-soft); border-color: transparent; color: var(--warn); }
@@ -683,6 +685,19 @@ dialog h3 { margin: 0 0 4px; font-size: 18px; }
   </form>
 </dialog>
 
+<!-- Hiding a repeating calendar event: this one, or every time -->
+<dialog id="hideEvDlg">
+  <form method="dialog">
+    <h3 id="hideEvTitle">Hide this event?</h3>
+    <p class="small muted" style="margin:0">It's hidden from Coming up and Recent events. You can show hidden events again any time.</p>
+    <div class="dlg-actions">
+      <button value="cancel" class="btn">Cancel</button>
+      <button value="one" class="btn">Just this one</button>
+      <button value="series" class="btn primary">Every time it repeats</button>
+    </div>
+  </form>
+</dialog>
+
 <!-- Who a calendar event is with: corrects Circle's guess from names -->
 <dialog id="evWhoDlg">
   <form id="evWhoForm">
@@ -1015,7 +1030,7 @@ function ordinal(n) { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n 
 // Conversations live in one list so a single entry can include several people.
 // Relations link two people in Circle: { from, to, type } means "to is from's <type>".
 // Family members who aren't in Circle themselves (kids, pets) live on the person.
-let data = { version: 2, people: [], interactions: [], relations: [], followUps: [], eventLinks: [] };
+let data = { version: 2, people: [], interactions: [], relations: [], followUps: [], eventLinks: [], hiddenEvents: [] };
 let saveTimer = null;
 
 function normalize(d) {
@@ -1086,6 +1101,12 @@ function normalize(d) {
   // calendar reader on the server uses these instead of matching by name.
   d.eventLinks = (Array.isArray(d.eventLinks) ? d.eventLinks : []).filter(l => l && l.id)
     .map(l => ({ id: String(l.id), title: String(l.title || ''), personIds: (l.personIds || []).filter(id => ids.has(id)) }));
+  // Calendar events hidden from Coming up and Recent events: { id }, where id is one event's
+  // key ("<UID>|<start>") or a whole repeating series (the UID). A single event is forgotten
+  // two months after its date; a hidden series stays hidden.
+  const forgetBefore = new Date(Date.now() - 60 * 864e5).toISOString();
+  d.hiddenEvents = (Array.isArray(d.hiddenEvents) ? d.hiddenEvents : []).filter(h => h && h.id)
+    .map(h => ({ id: String(h.id) })).filter(h => !h.id.includes('|') || h.id.slice(h.id.lastIndexOf('|') + 1) >= forgetBefore);
   d.version = 2;
   return d;
 }
@@ -1137,7 +1158,7 @@ const canon = v => JSON.stringify(v, (k, x) => x && typeof x === 'object' && !Ar
   ? Object.fromEntries(Object.keys(x).sort().map(key => [key, x[key]])) : x);
 function mergeDocs(base, local, remote) {
   const out = {};
-  for (const key of ['people', 'interactions', 'relations', 'followUps', 'eventLinks']) {
+  for (const key of ['people', 'interactions', 'relations', 'followUps', 'eventLinks', 'hiddenEvents']) {
     const byId = arr => new Map((arr || []).map(x => [x.id, x]));
     const B = byId(base?.[key]), L = byId(local[key]), R = byId(remote[key]);
     out[key] = [];
@@ -1829,12 +1850,15 @@ function renderHome() {
   // Calendar events, with or without people in Circle. Today's meetings with your
   // people are on the Today card already, and events that have finished are left out.
   const multiCal = new Set(agenda.map(m => m.calendar_label).filter(Boolean)).size > 1;
-  const calEvents = agenda.filter(m => {
+  const calAll = agenda.filter(m => {
     const days = -daysSince(eventDate(m));
     if (days < 0 || days > REMIND_DAYS) return false;
     if (!m.all_day && new Date(m.end_at).getTime() < Date.now()) return false;
     return !(days === 0 && !m.all_day && m.person_ids.some(getPerson));
   });
+  // Hidden events stay out unless "show" is on.
+  const hiddenCal = calAll.filter(isHiddenEv).length;
+  const calEvents = ui.showHiddenCal ? calAll : calAll.filter(m => !isHiddenEv(m));
   const CAL_LIMIT = 15;
   for (const m of calEvents.slice(0, CAL_LIMIT)) {
     const p = m.person_ids.map(getPerson).find(Boolean);
@@ -1868,7 +1892,6 @@ function renderHome() {
     ${todayCard()}
     ${quickNoteCard()}
     ${inboxCard()}
-    ${recentCard()}
     ${hard.length ? `<section class="card hard-card" style="margin-bottom:16px"><h2>Going through something</h2>
       <ul class="list">${hard.map(({ p, e }) => `<li>${avatar(p)}<div class="grow">${personLink(p)}
         <div class="small">${EV_TYPES[e.type][0]} ${esc(e.title)} <span class="muted">· ${when(e.date).toLowerCase()}</span></div>
@@ -1884,8 +1907,9 @@ function renderHome() {
             // A calendar event with nobody from Circle gets a calendar icon and its title instead of a name.
             const who = u.cal ? (u.people.some(getPerson) ? peopleLinks(u.people) : '') : personLink(u.p);
             const icon = u.p ? avatar(u.p) : '<div class="avatar" style="--h:210" aria-hidden="true">📅</div>';
-            return `<li>${icon}<div class="grow">${who}<div class="small ${who ? 'muted' : ''}">${u.label}</div></div>${u.cal ? whoBtn(u.ev) : ''}<span class="pill ${u.days <= 7 ? 'accent' : ''}">${inDays(u.days)}</span></li>`;
+            return `<li class="${u.cal && isHiddenEv(u.ev) ? 'muted' : ''}">${icon}<div class="grow">${who}<div class="small ${who ? 'muted' : ''}">${u.label}</div></div>${u.cal ? whoBtn(u.ev) + hideBtn(u.ev) : ''}<span class="pill ${u.days <= 7 ? 'accent' : ''}">${inDays(u.days)}</span></li>`;
           }).join('')}</ul>${moreCal ? `<p class="small muted" style="margin:8px 0 0">and ${moreCal} more calendar event${moreCal === 1 ? '' : 's'}</p>` : ''}` : empty('No birthdays, anniversaries or calendar events in the next month.')}
+          ${hiddenCal ? `<p class="small muted" style="margin:8px 0 0">${hiddenCal} hidden · <button type="button" class="linkish small" data-toggle-hidden-cal>${ui.showHiddenCal ? 'hide them again' : 'show'}</button></p>` : ''}
         </section>
       </div>
       <div class="stack">
@@ -1900,6 +1924,7 @@ function renderHome() {
         </section>
       </div>
     </div>
+    ${recentCard()}
   </div>`;
   if (qn) { const t = $('#quickNote'); t.focus(); t.setSelectionRange(qn[0], qn[1]); }
   // Opened from a "How did it go?" notification or an "Add a note" button: start typing straight away.
@@ -2996,6 +3021,35 @@ let agenda = []; // today's meetings: { event_key, start_at, end_at, title, pers
 // An event's key is "<UID>|<start>"; the UID is shared by every occurrence of a repeating event.
 const eventUid = m => m.event_key.slice(0, m.event_key.lastIndexOf('|'));
 const whoBtn = m => `<button type="button" class="btn ghost small" data-ev-who="${esc(m.event_key)}" title="Change who this event is with">Who?</button>`;
+// Hiding calendar events that don't need attention (Coming up, Recent events).
+const isHiddenEv = m => data.hiddenEvents.some(h => h.id === m.event_key || h.id === eventUid(m));
+const hideBtn = m => isHiddenEv(m)
+  ? `<button type="button" class="btn ghost small" data-unhide-ev="${esc(m.event_key)}" title="Show this event again">Unhide</button>`
+  : `<button type="button" class="btn ghost small" data-hide-ev="${esc(m.event_key)}" title="Hide this event" aria-label="Hide this event">Hide</button>`;
+function hideEvent(m, series) {
+  const id = series ? eventUid(m) : m.event_key;
+  if (!data.hiddenEvents.some(h => h.id === id)) data.hiddenEvents.push({ id });
+  save(); render();
+  toast(series ? `Hidden every time "${m.title || 'this event'}" repeats.` : `"${m.title || 'Event'}" hidden.`);
+}
+let hidingEv = null;
+document.addEventListener('click', e => {
+  const hide = e.target.closest('[data-hide-ev]'), unhide = e.target.closest('[data-unhide-ev]');
+  if (unhide) {
+    const m = agenda.find(x => x.event_key === unhide.dataset.unhideEv);
+    if (m) { data.hiddenEvents = data.hiddenEvents.filter(h => h.id !== m.event_key && h.id !== eventUid(m)); save(); render(); }
+    return;
+  }
+  if (!hide) return;
+  const m = agenda.find(x => x.event_key === hide.dataset.hideEv);
+  if (!m) return;
+  // A repeating event: just this one, or every time it repeats.
+  if (agenda.filter(x => eventUid(x) === eventUid(m)).length > 1) {
+    hidingEv = m;
+    $('#hideEvTitle').textContent = `Hide "${m.title || 'this event'}"?`;
+    $('#hideEvDlg').showModal();
+  } else hideEvent(m, false);
+});
 
 // ---------- Who an event is with ----------
 let evWho = null; // { m, ids }
@@ -3122,7 +3176,7 @@ function recentCard() {
   const past = agenda.filter(m => {
     const days = daysSince(eventDate(m));
     const over = m.all_day ? days >= 1 : new Date(m.end_at).getTime() <= now;
-    return over && days <= RECENT_DAYS;
+    return over && days <= RECENT_DAYS && !isHiddenEv(m);
   }).sort((a, b) => b.start_at.localeCompare(a.start_at)).slice(0, 12);
   if (!past.length) return '';
   const logged = new Set(data.interactions.map(i => i.eventKey).filter(Boolean));
@@ -3131,12 +3185,22 @@ function recentCard() {
     const who = m.person_ids.some(getPerson) ? ` · with ${peopleLinks(m.person_ids)}` : ' · no one from Circle yet';
     return `<li><div class="avatar" style="--h:210" aria-hidden="true">📅</div>
       <div class="grow"><strong>${esc(m.title || 'Event')}</strong><div class="small muted">${at}${who}</div></div>
-      ${whoBtn(m)}${logged.has(m.event_key) ? '<span class="pill accent">✓ Logged</span>'
+      ${whoBtn(m)}${hideBtn(m)}${logged.has(m.event_key) ? '<span class="pill accent">✓ Logged</span>'
         : `<button type="button" class="btn small primary" data-log-event="${esc(m.event_key)}">Log it</button>`}</li>`;
   }).join('');
-  return `<section class="card" style="margin-bottom:16px"><h2>Recent events</h2>
-    <p class="small muted" style="margin:0 0 8px">The past week from your calendar. Log the ones you shared with people.</p><ul class="list">${rows}</ul></section>`;
+  // Folded away unless you opened it last time (remembered on this device).
+  const open = lsGet('circle-recent-open') === '1';
+  return `<details class="card recent-card" style="margin-top:16px" ${open ? 'open' : ''}>
+    <summary><h2 style="display:inline">Recent events · ${past.length}</h2></summary>
+    <p class="small muted" style="margin:8px 0">The past week from your calendar. Log the ones you shared with people; hide the rest.</p><ul class="list">${rows}</ul></details>`;
 }
+document.addEventListener('toggle', e => { if (e.target.classList?.contains('recent-card')) lsSet('circle-recent-open', e.target.open ? '1' : '0'); }, true);
+document.addEventListener('click', e => { if (e.target.closest('[data-toggle-hidden-cal]')) { ui.showHiddenCal = !ui.showHiddenCal; render(); } });
+$('#hideEvDlg').addEventListener('close', () => {
+  const v = $('#hideEvDlg').returnValue;
+  if (hidingEv && (v === 'one' || v === 'series')) hideEvent(hidingEv, v === 'series');
+  hidingEv = null;
+});
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-log-event]');
   if (!b) return;
